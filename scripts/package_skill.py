@@ -124,7 +124,7 @@ def package_skill(skill_path: Path, output_dir: Path = None, version: str = None
         return None
     print(f"✅ Валидация прошла")
 
-    skill_name = skill_path.name
+    skill_name = "vk-ads-manager"  # фиксировано: не зависит от имени рабочей папки
     if output_dir is None:
         output_dir = skill_path.parent
     output_dir = Path(output_dir).resolve()
@@ -141,7 +141,7 @@ def package_skill(skill_path: Path, output_dir: Path = None, version: str = None
         for fp in skill_path.rglob("*"):
             if not fp.is_file():
                 continue
-            arcname = fp.relative_to(skill_path.parent)
+            arcname = Path(skill_name) / fp.relative_to(skill_path)
             if should_exclude(arcname):
                 skipped_count += 1
                 skipped_list.append(str(arcname))
