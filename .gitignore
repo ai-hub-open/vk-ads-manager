@@ -1,0 +1,28 @@
+# секреты и локальные credential-ы — НИКОГДА не коммитить
+.env
+*.env
+credentials.json
+~/.vk-ads-manager/
+*.key
+*.pem
+
+# рабочие папки кампаний
+vk-campaign-*/
+assets/
+report/
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# логи и артефакты сборки
+*.log
+*.skill
+!dist/*.skill
+
+# ОС
+.DS_Store
+Thumbs.db

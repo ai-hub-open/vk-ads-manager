@@ -1,0 +1,20 @@
+# vk-ads-manager — Python-зависимости
+# Установка: pip install -r requirements.txt
+# Или: python install.py (с проверками)
+
+# Image generation (M1)
+openai>=1.40
+pillow>=10.0
+
+# HTTP (для VK Ads API, OpenAI URL download)
+requests>=2.31
+
+# Spreadsheet generation (Шаг 10 — ads.xlsx)
+openpyxl>=3.1
+
+# Word doc generation (медиаплан)
+python-docx>=1.0
+
+# PDF generation (M3 — lead magnets)
+reportlab>=4.0
+markdown>=3.5
