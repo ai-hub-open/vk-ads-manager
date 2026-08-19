@@ -2,6 +2,16 @@
 
 Версии — [semver](https://semver.org/lang/ru/): до 1.0 состав шагов и материалов может меняться.
 
+## 0.6.0 — 2026-08-19
+
+Переход на хостовый MCP aihub.click.ru и сверка имён инструментов с живым сервером.
+
+- **Основной путь — хостовый сервер** `https://vkads-mcp.aihub.click.ru/mcp`: локальный Bun и клон репозитория больше не нужны. Discovery (список инструментов, `initialize`) открыт без кредов; вызовы требуют заголовки `X-Click-Ru-Token` + `X-Click-Ru-Account-Id` (альтернативы: `X-VK-Ads-Token`, OAuth client credentials).
+- **Имена инструментов приведены к живому `tools/list`** (48 штук, снято 19.08.2026): вместо прежних `create_ad_plan` / `upload_image` / `get_statistics_summary` теперь везде реальные `vk_ads_ad_plans_create`, `vk_ads_content_upload_image`, `vk_ads_statistics_summary` и т.д. — в `SKILL.md` (онбординг, Шаги 0.5, 9.5, 11), `references/forecasting.md`, `scripts/forecast.py`.
+- **`references/vk-ads-mcp-integration.md` переписан целиком:** подключение, таблица авторизации, полный список 48 инструментов по областям, маппинг задач скилла на инструменты, ограничения хостового режима.
+- **Креативы на хосте — только по публичному URL.** `vk_ads_content_upload_image/video` принимают `source_path_or_url`, но чтение файлов с диска сервера выключено: локальные `assets/images/*` сначала выкладываются по ссылке, либо медиа заливаются через путь B (`deploy_campaign.py` умеет локальные файлы).
+- **Установщик переписан.** `scripts/setup_vk_ads_mcp.py`: цели `cursor`, `cursor-project`, `claude-code`, `claude-desktop` (мост `mcp-remote`), `all`; флаги `--dry-run`, `--remove`, `--vk-ads-token` (вместо click.ru). Общий справочник подключения — `docs/hosted-mcp-setup.md` в корне репозитория.
+
 ## 0.5.1 — 2026-08-03
 
 Требования к среде исполнения названы явно. Раньше скилл был написан под одну конкретную среду и прямо называл её инструменты: «Все скрипты запускай сам через `mcp__workspace__bash`». В другой среде агент читал инструкцию, которую не мог выполнить, и решал на ходу.
