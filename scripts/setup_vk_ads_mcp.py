@@ -1,29 +1,35 @@
-#!/usr/bin/env python3
 """
-setup_vk_ads_mcp.py — подключает vk-ads-mcp (https://github.com/ai-hub-open/vk-ads-mcp)
-к Claude Desktop одной командой.
+setup_vk_ads_mcp.py — подключает хостовый MCP «VK Реклама» (aihub.click.ru) к MCP-клиентам.
 
-Что делает:
-1. Находит claude_desktop_config.json для текущей ОС
-2. Создаёт/обновляет запись `mcpServers.vk-ads` со ссылкой на установленный vk-ads-mcp
-3. Подставляет VK_ADS_ACCESS_TOKEN из credentials.json (если уже сохранён)
-   или из аргумента --token
+Сервер уже поднят на стороне aihub — клонировать репозиторий и ставить Bun
+НЕ нужно. Скрипт только дописывает блок `mcpServers.vk-ads` в конфиги клиентов
+(с бэкапом; существующие серверы сохраняются).
 
-Использование (Claude сам запускает в Cowork):
-    # Если уже клонирован vk-ads-mcp и сохранён токен через manage_credentials:
+Сервер:
+- vk-ads → https://vkads-mcp.aihub.click.ru/mcp (48 инструментов VK Ads API, имена vk_ads_*)
+
+Авторизация (один из вариантов):
+A. Через click.ru (основной): --token <CLICK_RU_TOKEN> + --vk-account-id <ID>
+   Токен: https://click.ru/userinfo.html → «API Token».
+   ID аккаунта VK Рекламы в click.ru: GET /accounts в https://api.click.ru/V0/docs/.
+B. Готовый access_token VK Ads: --vk-ads-token <eyJ0...>
+
+Цели (--target, можно несколько):
+- cursor          ~/.cursor/mcp.json (глобально для Cursor)
+- cursor-project  .cursor/mcp.json в текущей папке
+- claude-code     .mcp.json в текущей папке
+- claude-desktop  claude_desktop_config.json (через stdio-мост mcp-remote, нужен Node.js)
+- all             cursor + claude-code + claude-desktop
+
+Использование:
     python -m scripts.setup_vk_ads_mcp \
-      --vk-ads-mcp-path C:\\Users\\ptica\\Documents\\vk-ads-mcp
+        --token <CLICK_RU_TOKEN> --vk-account-id <ID> --target all
+    python -m scripts.setup_vk_ads_mcp --remove --target cursor
 
-    # С токеном напрямую:
-    python -m scripts.setup_vk_ads_mcp \
-      --vk-ads-mcp-path C:\\path\\to\\vk-ads-mcp \
-      --token eyJ0...
-
-    # Удалить запись (revert):
-    python -m scripts.setup_vk_ads_mcp --remove
-
-После запуска — перезапустить Claude Desktop. Tools mcp__vk-ads__* станут доступны в чате.
+Скрипт ничего не запускает и не отправляет наружу; токен в логах маскируется.
+После записи — перезапусти клиента и проверь связь инструментом vk_ads_auth_check.
 """
+from __future__ import annotations
 
 import argparse
 import json
@@ -33,140 +39,203 @@ import shutil
 import sys
 from pathlib import Path
 
-try:
-    from scripts.credentials import load_api_key, CredentialNotFound
-except ImportError:
-    sys.path.insert(0, str(Path(__file__).parent.parent))
-    from scripts.credentials import load_api_key, CredentialNotFound
+VK_ADS_URL = "https://vkads-mcp.aihub.click.ru/mcp"
+VK_ADS_SERVER = "vk-ads"
 
 
-def claude_desktop_config_path() -> Path:
-    """Возвращает путь к claude_desktop_config.json для текущей ОС."""
+# ---------- пути конфигов ----------
+
+def cursor_user_config() -> Path:
+    return Path.home() / ".cursor" / "mcp.json"
+
+
+def cursor_project_config() -> Path:
+    return Path.cwd() / ".cursor" / "mcp.json"
+
+
+def claude_code_config() -> Path:
+    return Path.cwd() / ".mcp.json"
+
+
+def claude_desktop_config() -> Path | None:
     system = platform.system()
-    if system == "Darwin":  # macOS
+    if system == "Darwin":
         return Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
     if system == "Windows":
         appdata = os.environ.get("APPDATA")
-        if appdata:
-            return Path(appdata) / "Claude" / "claude_desktop_config.json"
-        return Path.home() / "AppData" / "Roaming" / "Claude" / "claude_desktop_config.json"
-    # Linux / другое
-    return Path.home() / ".config" / "Claude" / "claude_desktop_config.json"
+        return Path(appdata) / "Claude" / "claude_desktop_config.json" if appdata else None
+    xdg = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+    return Path(xdg) / "Claude" / "claude_desktop_config.json"
 
 
-def load_config(path: Path) -> dict:
+TARGETS = {
+    "cursor": cursor_user_config,
+    "cursor-project": cursor_project_config,
+    "claude-code": claude_code_config,
+    "claude-desktop": claude_desktop_config,
+}
+
+
+# ---------- заголовки и блоки ----------
+
+def vk_headers(token: str | None, account_id: str | None, user_id: str | None,
+               vk_ads_token: str | None) -> dict:
+    if vk_ads_token:
+        return {"X-VK-Ads-Token": vk_ads_token}
+    headers = {"X-Click-Ru-Token": token, "X-Click-Ru-Account-Id": account_id}
+    if user_id:
+        headers["X-Click-Ru-User-Id"] = user_id
+    return headers
+
+
+def build_entry(target: str, headers: dict) -> dict:
+    if target == "claude-desktop":
+        args = ["-y", "mcp-remote", VK_ADS_URL]
+        for key, value in headers.items():
+            args += ["--header", f"{key}: {value}"]
+        return {"command": "npx", "args": args}
+    entry = {"url": VK_ADS_URL, "headers": headers}
+    if target == "claude-code":
+        entry = {"type": "http", **entry}
+    return entry
+
+
+# ---------- запись конфигов ----------
+
+def load_json(path: Path) -> dict:
     if not path.exists():
         return {}
-    with path.open(encoding="utf-8") as f:
-        return json.load(f)
-
-
-def save_config(path: Path, data: dict, backup: bool = True):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if backup and path.exists():
-        bk = path.with_suffix(".json.bak")
-        shutil.copy(path, bk)
-        print(f"  Backup: {bk}")
-    with path.open("w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-
-def get_token(arg_token: str = None) -> str:
-    """Получает VK Ads токен: 1) из аргумента, 2) из credentials.json, 3) raise."""
-    if arg_token:
-        return arg_token
     try:
-        return load_api_key("vk_ads")
-    except CredentialNotFound:
-        raise SystemExit(
-            "Нужен токен VK Ads. Либо передай --token <key>, либо сохрани заранее:\n"
-            "  python -m scripts.manage_credentials set vk_ads"
-        )
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        raise SystemExit(f"Не смог распарсить {path}: {e}")
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Настройка vk-ads-mcp в Claude Desktop config")
-    parser.add_argument(
-        "--vk-ads-mcp-path",
-        help="Абсолютный путь к локально клонированному vk-ads-mcp",
+def save_json(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        backup = path.with_suffix(path.suffix + ".bak")
+        shutil.copy2(path, backup)
+        print(f"  Бэкап: {backup}")
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def mask(value: str) -> str:
+    return f"{value[:4]}...{value[-2:]}" if len(value) > 6 else "***"
+
+
+def mask_entry(entry: dict) -> dict:
+    entry = json.loads(json.dumps(entry))
+    headers = entry.get("headers")
+    if headers:
+        for key in headers:
+            if "token" in key.lower():
+                headers[key] = mask(headers[key])
+    if entry.get("args"):
+        entry["args"] = [
+            arg.split(": ", 1)[0] + ": " + mask(arg.split(": ", 1)[1])
+            if ": " in arg and "token" in arg.split(": ", 1)[0].lower()
+            else arg
+            for arg in entry["args"]
+        ]
+    return entry
+
+
+def apply_entry(config_path: Path, entry: dict, *, remove: bool, dry_run: bool) -> None:
+    config = load_json(config_path)
+    servers = config.setdefault("mcpServers", {})
+    if not isinstance(servers, dict):
+        raise SystemExit(f"{config_path}: поле mcpServers не объект, правлю вручную не буду")
+
+    if remove:
+        if servers.pop(VK_ADS_SERVER, None) is not None:
+            print(f"  - {VK_ADS_SERVER}: удалён")
+        else:
+            print(f"  - {VK_ADS_SERVER}: не был записан, пропускаю")
+        if not servers:
+            config.pop("mcpServers", None)
+    else:
+        replaced = VK_ADS_SERVER in servers
+        servers[VK_ADS_SERVER] = entry
+        print(f"  - {VK_ADS_SERVER}: {'перезаписан' if replaced else 'добавлен'}")
+        print(f"    {json.dumps(mask_entry(entry), ensure_ascii=False)}")
+
+    if dry_run:
+        print(f"[dry-run] Не пишу в {config_path}.")
+        return
+    save_json(config_path, config)
+    print(f"  Записано: {config_path}")
+
+
+# ---------- main ----------
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Подключить хостовый MCP «VK Реклама» (vkads-mcp.aihub.click.ru) к Cursor, Claude Code, Claude Desktop",
     )
+    parser.add_argument("--token", help="API-токен click.ru (или env CLICK_RU_TOKEN)")
+    parser.add_argument("--vk-account-id", help="ID аккаунта VK Рекламы в click.ru (или env CLICK_RU_ACCOUNT_ID)")
+    parser.add_argument("--click-ru-user-id", help="ID пользователя click.ru — только для мастер-аккаунта")
+    parser.add_argument("--vk-ads-token", help="Готовый access_token VK Ads вместо click.ru (или env VK_ADS_ACCESS_TOKEN)")
     parser.add_argument(
-        "--token",
-        default=None,
-        help="VK Ads access token (если не передан — берётся из credentials)",
+        "--target", action="append",
+        choices=["cursor", "cursor-project", "claude-code", "claude-desktop", "all"],
+        help="Куда писать конфиг. Можно несколько раз. По умолчанию: cursor",
     )
-    parser.add_argument(
-        "--server-name",
-        default="vk-ads",
-        help="Имя сервера в mcpServers (по умолчанию vk-ads)",
-    )
-    parser.add_argument("--remove", action="store_true", help="Удалить запись vk-ads из конфига")
-    parser.add_argument("--check", action="store_true", help="Только показать текущую конфигурацию")
+    parser.add_argument("--remove", action="store_true", help="Удалить запись vk-ads из конфигов")
+    parser.add_argument("--dry-run", action="store_true", help="Показать, что будет записано, без записи")
     args = parser.parse_args()
 
-    cfg_path = claude_desktop_config_path()
-    print(f"Claude Desktop config: {cfg_path}")
-    config = load_config(cfg_path)
+    targets = args.target or ["cursor"]
+    if "all" in targets:
+        targets = ["cursor", "claude-code", "claude-desktop"]
 
-    if args.check:
-        servers = config.get("mcpServers", {})
-        print(f"\nТекущие MCP-серверы ({len(servers)}):")
-        for name, conf in servers.items():
-            print(f"  - {name}: {conf.get('command', '?')}")
+    headers: dict = {}
+    if not args.remove:
+        vk_ads_token = args.vk_ads_token or os.environ.get("VK_ADS_ACCESS_TOKEN")
+        token = args.token or os.environ.get("CLICK_RU_TOKEN")
+        account_id = args.vk_account_id or os.environ.get("CLICK_RU_ACCOUNT_ID")
+        if not vk_ads_token and not (token and account_id):
+            print(
+                "Нужны креды. Варианты:\n"
+                "  A. click.ru: --token <CLICK_RU_TOKEN> --vk-account-id <ID>\n"
+                "     (env CLICK_RU_TOKEN + CLICK_RU_ACCOUNT_ID)\n"
+                "  B. готовый токен VK Ads: --vk-ads-token <eyJ0...> (env VK_ADS_ACCESS_TOKEN)",
+                file=sys.stderr,
+            )
+            return 1
+        headers = vk_headers(token, account_id, args.click_ru_user_id, vk_ads_token)
+
+    print("=== Хостовый MCP «VK Реклама» ===")
+    print(f"Сервер: {VK_ADS_SERVER} → {VK_ADS_URL}")
+    print(f"Цели:   {', '.join(targets)}")
+    print()
+
+    for target in targets:
+        path = TARGETS[target]()
+        if path is None:
+            print(f"[{target}] Не нашёл стандартный путь конфига для {platform.system()}, пропускаю.")
+            continue
+        print(f"[{target}] {path}")
+        if target == "claude-desktop" and not args.remove:
+            print("  Формат: stdio-мост npx mcp-remote (нужен Node.js в PATH)")
+        apply_entry(path, build_entry(target, headers), remove=args.remove, dry_run=args.dry_run)
+        print()
+
+    if args.remove or args.dry_run:
         return 0
 
-    if args.remove:
-        if "mcpServers" not in config or args.server_name not in config["mcpServers"]:
-            print(f"Запись '{args.server_name}' не найдена. Ничего не сделано.")
-            return 0
-        del config["mcpServers"][args.server_name]
-        if not config["mcpServers"]:
-            del config["mcpServers"]
-        save_config(cfg_path, config)
-        print(f"✓ Запись '{args.server_name}' удалена. Перезапусти Claude Desktop.")
-        return 0
-
-    # Обычный режим — set
-    if not args.vk_ads_mcp_path:
-        print("ERROR: укажи --vk-ads-mcp-path <путь к клонированному репо>", file=sys.stderr)
-        print("\nЕсли репо ещё не клонирован, выполни:", file=sys.stderr)
-        print("  git clone https://github.com/ai-hub-open/vk-ads-mcp.git", file=sys.stderr)
-        print("  cd vk-ads-mcp && uv sync   # или pip install -e .", file=sys.stderr)
-        return 1
-
-    mcp_path = Path(args.vk_ads_mcp_path).resolve()
-    if not mcp_path.exists():
-        print(f"ERROR: путь {mcp_path} не существует", file=sys.stderr)
-        return 1
-    if not (mcp_path / "pyproject.toml").exists():
-        print(f"WARN: в {mcp_path} нет pyproject.toml — возможно это не корень vk-ads-mcp", file=sys.stderr)
-
-    token = get_token(args.token)
-
-    # Собираем entry для mcpServers
-    # Используем uvx --from <path> vk-ads-mcp — это стабильно и не зависит от
-    # активного виртуального окружения.
-    entry = {
-        "command": "uvx",
-        "args": ["--from", str(mcp_path), "vk-ads-mcp"],
-        "env": {
-            "VK_ADS_ACCESS_TOKEN": token,
-        },
-    }
-
-    if "mcpServers" not in config:
-        config["mcpServers"] = {}
-    config["mcpServers"][args.server_name] = entry
-
-    save_config(cfg_path, config)
-    print(f"\n✓ Запись '{args.server_name}' сохранена.")
-    print(f"\nСледующие шаги:")
-    print(f"  1. Перезапусти Claude Desktop (полный выход + перезапуск, не reload)")
-    print(f"  2. В чате спроси Claude: «Какие у тебя есть mcp__vk-ads__* tools?»")
-    print(f"  3. Если показывает 48 инструментов — всё работает!")
-    print(f"\nЕсли что-то не так — проверь логи Claude Desktop:")
-    print(f"  macOS:   ~/Library/Logs/Claude/")
-    print(f"  Windows: %APPDATA%\\Claude\\logs\\")
+    print("=== Дальше ===")
+    if "claude-desktop" in targets:
+        print("1. Полностью закрой Claude Desktop (в трее тоже) и открой заново.")
+    if "cursor" in targets or "cursor-project" in targets:
+        print("1. Cursor: Settings → MCP — сервер vk-ads должен стать зелёным (или перезапусти Cursor).")
+    if "claude-code" in targets:
+        print("1. Claude Code: новая сессия подхватит .mcp.json автоматически.")
+    print("2. Проверь связь: вызови vk_ads_auth_check — должен вернуть данные пользователя VK Ads.")
+    print("3. Ошибка «Не заданы креды» = не дошли заголовки; 401 — токен недействителен.")
+    print()
+    print("Справочник подключения: docs/hosted-mcp-setup.md")
     return 0
 
 

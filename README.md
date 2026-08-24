@@ -83,9 +83,9 @@
 | `deploy_campaign.py` | загрузка медиа и создание кампании, групп и объявлений |
 | `vk_ads_api.py` | работа с API ВК Рекламы и предстартовая проверка маркировки |
 | `generate_launch_guide.py` | инструкция для ручной загрузки |
-| `setup_vk_ads_mcp.py` | подключение совместимого MCP-сервера |
+| `setup_vk_ads_mcp.py` | подключение хостового MCP-сервера `vk-ads` (Cursor / Claude Code / Claude Desktop) |
 
-Для работы через MCP используйте публичный сервер [`ai-hub-open/vk-ads-mcp`](https://github.com/ai-hub-open/vk-ads-mcp).
+Для работы через MCP используется хостовый сервер [`vkads-mcp.aihub.click.ru`](https://vkads-mcp.aihub.click.ru) (код — [`ai-hub-open/vk-ads-mcp`](https://github.com/ai-hub-open/vk-ads-mcp)). Подключение: `python -m scripts.setup_vk_ads_mcp --token <CLICK_RU_TOKEN> --vk-account-id <ID> --target all`, подробности — [`docs/hosted-mcp-setup.md`](docs/hosted-mcp-setup.md) и `references/vk-ads-mcp-integration.md`.
 
 ### Справочники
 
@@ -138,7 +138,7 @@
 
 - Python 3.9 или новее;
 - доступ к ВК Рекламе;
-- токен ВК Рекламы или настроенный MCP-сервер;
+- токен ВК Рекламы или API-токен click.ru для хостового MCP-сервера `vk-ads`;
 - реквизиты рекламодателя для маркировки;
 - API-ключи сервисов, которые вы используете для генерации изображений или видео.
 

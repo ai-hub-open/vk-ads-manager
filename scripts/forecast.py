@@ -35,7 +35,7 @@ TEMPLATE = {
     "budgets": {"minimal": 30000, "target": 40000, "expanded": 80000},
     "metrics": {
         "cpm": {"low": 150, "mid": 200, "high": 280, "source": "benchmark",
-                "note": "ЗАМЕНИТЬ на CPM из get_statistics_summary похожей кампании"},
+                "note": "ЗАМЕНИТЬ на CPM из vk_ads_statistics_summary похожей кампании"},
         "ctr": {"low": 0.004, "mid": 0.006, "high": 0.009, "source": "benchmark",
                 "note": "холодная лента VK; api если есть статистика"},
         "cr_landing": {"low": 0.01, "mid": 0.02, "high": 0.04, "source": "assumption",
@@ -195,7 +195,7 @@ def main():
         else:
             inp.write_text(json.dumps(TEMPLATE, ensure_ascii=False, indent=2), encoding="utf-8")
             print(f"Создан шаблон: {inp}\n"
-                  "Заполни CPM/CTR из MCP (get_statistics_summary), CR — от клиента, "
+                  "Заполни CPM/CTR из MCP (vk_ads_statistics_summary), CR — от клиента, "
                   "затем запусти без --init.")
         return 0
 
