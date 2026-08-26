@@ -14,6 +14,8 @@ API наследует имена от myTarget, которые в новом UI
 
 **Правильная цепочка создания:** `ad_plan` → `campaign` (с `ad_plan_id`) → `banner` (с `campaign_id`).
 
+> В `campaigns` и `ad_groups` API отдаёт одну и ту же сущность под двумя именами — `GET /campaigns.json` и `GET /ad_groups.json` возвращают идентичный список.
+
 **🚨 Gotcha:** `campaign` (группа) без `ad_plan_id` создаётся, но становится **orphan** — невидим в новом UI. А `banner` привязывается к `campaign_id` (к ГРУППЕ), **не** к `ad_plan_id`.
 
 **В нашем `scripts/vk_ads_api.py` это исправлено:** используй `client.create_campaign_tree(ad_plan_payload, groups)` — он атомарно создаёт `ad_plan → campaigns → banners` в правильных связях и статусе `blocked`. Классы: `client.ad_plans` (Кампания), `client.campaigns` (Группа), `client.banners` (Объявление).

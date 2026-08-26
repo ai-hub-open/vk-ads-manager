@@ -1,6 +1,6 @@
 # Подключение MCP-сервера «VK Реклама»
 
-Скилл работает с кабинетом через **хостовый MCP-сервер** организации: `https://vkads-mcp.aihub.click.ru/mcp` (код — <https://github.com/ai-hub-open/vk-ads-mcp>) — 48 инструментов: кампании, группы, объявления, аудитории, бюджеты, статистика. Локально ничего не запускается, Bun и клон репозитория не нужны.
+Скилл работает с кабинетом через **хостовый MCP-сервер** организации: `https://vkads-mcp.aihub.click.ru/mcp` (код — <https://github.com/ai-hub-open/vk-ads-mcp>) — 45 инструментов: кампании, группы, объявления, аудитории, бюджеты, статистика. Локально ничего не запускается, Bun и клон репозитория не нужны.
 
 ## Подключение
 
@@ -30,23 +30,45 @@ python -m scripts.setup_vk_ads_mcp --token <CLICK_RU_TOKEN> --vk-account-id <ID>
 
 Вызов без кредов возвращает ошибку с перечнем нужных заголовков — по ней можно свериться, что шлюз жив.
 
-## Инструменты (48)
+## Инструменты (45)
 
-Снято с живого сервера (`GET /mcp/tools`, 19.08.2026). Все имена с префиксом `vk_ads_`:
+Снято с живого сервера 26.08.2026. Все имена с префиксом `vk_ads_`:
 
 | Область | Инструменты |
 |---|---|
-| Авторизация и аккаунт | `vk_ads_auth_check`, `vk_ads_account_info`, `vk_ads_token_revoke` |
+| Авторизация и аккаунт | `vk_ads_auth_check`, `vk_ads_account_info`, `vk_ads_accounts_list`, `vk_ads_token_revoke` |
 | Кампании (API `ad_plans`) | `vk_ads_ad_plans_list`, `vk_ads_ad_plans_get`, `vk_ads_ad_plans_create`, `vk_ads_ad_plans_update`, `vk_ads_ad_plans_delete` |
 | Группы объявлений (API `campaigns`) | `vk_ads_campaigns_list`, `vk_ads_campaigns_get`, `vk_ads_campaigns_create`, `vk_ads_campaigns_update`, `vk_ads_campaigns_set_status`, `vk_ads_campaigns_delete` |
-| Доп. группы (API `ad_groups`) | `vk_ads_ad_groups_list`, `vk_ads_ad_groups_get`, `vk_ads_ad_groups_create`, `vk_ads_ad_groups_update`, `vk_ads_ad_groups_delete` |
-| Объявления (API `banners`) | `vk_ads_banners_list`, `vk_ads_banners_get`, `vk_ads_banners_create`, `vk_ads_banners_update`, `vk_ads_banners_moderate`, `vk_ads_banners_delete` |
+| Те же группы под алиасом `ad_groups` | `vk_ads_ad_groups_list`, `vk_ads_ad_groups_get`, `vk_ads_ad_groups_create`, `vk_ads_ad_groups_update`, `vk_ads_ad_groups_delete` |
+| Объявления (API `banners`) | `vk_ads_banners_list`, `vk_ads_banners_get`, `vk_ads_banners_update`, `vk_ads_banners_remoderate`, `vk_ads_banners_delete` — **создания нет**, см. ниже |
 | Контент | `vk_ads_content_upload_image`, `vk_ads_content_upload_video` |
-| Статистика | `vk_ads_statistics_day`, `vk_ads_statistics_summary`, `vk_ads_statistics_breakdown`, `vk_ads_async_report_create`, `vk_ads_async_report_get` |
+| Статистика | `vk_ads_statistics_day`, `vk_ads_statistics_summary` |
 | Ремаркетинг | `vk_ads_remarketing_segments_list/create/update/delete`, `vk_ads_remarketing_pixels_list/create/delete` |
 | Списки пользователей | `vk_ads_users_lists_list`, `vk_ads_users_lists_create`, `vk_ads_users_lists_upload_items`, `vk_ads_users_lists_delete` |
 | Агентство | `vk_ads_agency_clients_list`, `vk_ads_agency_clients_create` |
 | Справочники | `vk_ads_packages_list`, `vk_ads_regions_search`, `vk_ads_dictionary_get` |
+
+### 🚨 Объявление нельзя создать отдельным вызовом
+
+В API нет `POST /banners`. Объявления создаются **только** вложенным массивом внутри группы:
+
+`vk_ads_campaigns_create(payload={..., "banners": [{...}, {...}]})`
+
+Либо целиком атомарно: `vk_ads_ad_plans_create(payload={..., "campaigns": [{..., "banners": [...]}]})` —
+`ad_plans_create` принимает вложенные `campaigns`, а `campaigns_create` принимает вложенные `banners`.
+
+Создать группу, а потом «долить» в неё объявления — **нельзя**. Группа без баннеров
+уходит в `status: blocked` с issue `NO_BANNERS_WITH_ACTIVE_STATUS` и остаётся мёртвой.
+
+### `campaigns` и `ad_groups` — одна сущность
+
+`vk_ads_campaigns_list` и `vk_ads_ad_groups_list` возвращают **идентичный результат** —
+это не два уровня иерархии, а два имени одного ресурса. Иерархия трёхуровневая:
+`ad_plan` → `campaign` (= `ad_group`) → `banner`.
+
+По умолчанию используй `vk_ads_campaigns_*`. Набор `vk_ads_ad_groups_*` оставлен
+для совместимости; исключение — `vk_ads_ad_groups_get`, он удобен тем, что отдаёт
+`issues` (диагностика, почему группа не крутится).
 
 В сессии агента имена могут выглядеть иначе (в одной среде — `mcp__vk-ads__vk_ads_auth_check` и т.п.) — ориентируйся по короткому имени.
 
@@ -54,13 +76,14 @@ python -m scripts.setup_vk_ads_mcp --token <CLICK_RU_TOKEN> --vk-account-id <ID>
 
 | Задача (шаг) | Инструменты |
 |---|---|
+| Выбор кабинета (режим click.ru, мультиаккаунт) | `vk_ads_accounts_list` → `account_id` передавать в каждый последующий вызов |
 | Аудит аккаунта (Шаг 0.5) | `vk_ads_auth_check`, `vk_ads_account_info`, `vk_ads_ad_plans_list` |
 | Фактические CPM/CTR для прогноза (Шаг 9.5) | `vk_ads_statistics_summary`, `vk_ads_statistics_day` (entity `campaigns`/`ad_groups`/`banners`, `ids`, `date_from`/`date_to`) |
 | Загрузка креативов (Шаг 11) | `vk_ads_content_upload_image` / `vk_ads_content_upload_video`, параметр `source_path_or_url` — **на хосте только публичный http(s)-URL** (см. ниже) |
-| Залив кампании (Шаг 11, путь A) | `vk_ads_ad_plans_create` (`payload` с nested `campaigns: [...]` → `banners: [...]`, атомарно) либо цепочка `vk_ads_ad_plans_create` → `vk_ads_campaigns_create(ad_plan_id=...)` → `vk_ads_banners_create(campaign_id=...)` |
+| Залив кампании (Шаг 11, путь A) | `vk_ads_ad_plans_create` с nested `campaigns: [...]` → `banners: [...]` — один атомарный вызов. Либо `vk_ads_ad_plans_create` → `vk_ads_campaigns_create(ad_plan_id=..., banners=[...])` по одной группе за вызов. Отдельного создания баннера нет |
 | Пауза/запуск, бюджет (lifecycle) | `vk_ads_campaigns_set_status`, `vk_ads_campaigns_update`, `vk_ads_ad_plans_update` |
 | CRM-аудитории и пиксели | `vk_ads_users_lists_*`, `vk_ads_remarketing_pixels_*` |
-| Отчёты за период | `vk_ads_statistics_summary` / `vk_ads_statistics_day`; большие срезы — `vk_ads_async_report_create` + `vk_ads_async_report_get` |
+| Отчёты за период | `vk_ads_statistics_summary` (агрегат) / `vk_ads_statistics_day` (по дням). Оба требуют явный список `ids` — режима «по всему кабинету» нет, сначала `vk_ads_campaigns_list`. Асинхронных отчётов и разрезов в MCP нет |
 
 ## Терминология (UI vs API)
 
@@ -74,11 +97,37 @@ python -m scripts.setup_vk_ads_mcp --token <CLICK_RU_TOKEN> --vk-account-id <ID>
 
 ## Ограничения хостового режима
 
-- **Локальные файлы недоступны.** `vk_ads_content_upload_image/video` на хосте принимают только публичный http(s)-URL (чтение файлов с диска сервера выключено, приватные сети блокируются как SSRF-защита). Картинки из `assets/images/` сначала выложи по публичной ссылке — или заливай медиа через путь B (`scripts/deploy_campaign.py` работает с локальными файлами).
+- **Локальные файлы недоступны.** `vk_ads_content_upload_image/video` на хосте принимают только публичный http(s)-URL (чтение файлов с диска сервера выключено, приватные сети блокируются как SSRF-защита). Картинки из `assets/images/` сначала выложи по публичной ссылке — или заливай медиа через путь B (`scripts/deploy_campaign.py` работает с локальными файлами). Правила к ссылкам, которые надо предъявлять клиенту, — в `references/vk-ads-specs.md` → «Требования к ссылкам на изображения от клиента».
 - Список ранее загруженных изображений/видео API не отдаёт — сохраняй ID из ответов загрузки.
 - Lookalike как отдельная сущность недоступен — используй сегменты, пиксели и списки пользователей.
 - У сервера нет встроенной точки подтверждения: вызов на изменение уходит в API сразу. Все сущности создавай в `status: "blocked"`; активация — только маркетологом в кабинете.
 - ВК ограничивает число активных OAuth-токенов (≤5); при ошибке `token_limit_exceeded` — `vk_ads_token_revoke`.
+
+## Особенности ответов сервера
+
+**Единицы.** `budget_limit` и `budget_limit_day` приходят в копейках
+(`6000000` = 60 000 ₽). `ctr` — десятичная доля, для процентов умножать на 100.
+Не показывай пользователю сырые значения.
+
+**Списки по умолчанию бедные.** `*_list` без параметра `fields` отдаёт только
+`id`, `name`, `package_id`. Ни статуса, ни бюджета, ни `ad_plan_id`.
+Рабочий набор: `fields="id,name,status,objective,budget_limit,budget_limit_day,ad_plan_id,created"`.
+
+**Конверт ответа не унифицирован.** `ad_plans_list` → `{count, items, offset}`;
+`remarketing_segments_list` → `{limit, offset, items, count}`;
+`remarketing_pixels_list` → `{items}` без `count`;
+`regions_search` → `{count, items, total_regions}`.
+Не строй пагинацию на обязательном наличии `count`.
+
+**Формат ошибки не унифицирован.** У словарей `detail` — строка
+(`{"status":404,"detail":"Not found"}`), у сущностей — объект
+(`{"status":404,"detail":{"error":{"code":"not_found","message":"Not found"}}}`).
+403 дополнительно отдаёт `required_permission` — по нему видно, каких прав не хватает
+(например, `view_clients` для `vk_ads_agency_clients_list`).
+
+**Справочники.** `vk_ads_dictionary_get` рабочие имена: `currencies`, `countries`, `regions`.
+Имена `interests`, `sectors`, `browsers`, `languages`, `os` отвечают 404 —
+не строй на них таргетинг. Для гео вместо полного дерева используй `vk_ads_regions_search`.
 
 ## Фолбеки
 
