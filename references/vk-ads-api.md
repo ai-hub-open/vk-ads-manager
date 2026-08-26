@@ -125,6 +125,9 @@ grant_type=client_credentials&client_id={ID}&client_secret={SECRET}
 - `GET /banners.json?campaign_id={id}` — список объявлений в группе
 - `GET /banners/{id}.json`
 - `POST /banners.json` — создание (нужен `campaign_id`)
+
+> ⚠️ **Не сверено.** vk-ads-mcp не предоставляет отдельного создания баннера и утверждает, что `POST /banners` в API нет. Метод `BannersAPI.create` в `scripts/vk_ads_api.py` конфликтует с этим утверждением. До живой проверки предпочитай вложенный массив `banners` внутри payload группы (`create_campaign_tree`).
+
 - `PUT /banners/{id}.json`
 
 **Объект Banner (универсальная запись):**

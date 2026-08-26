@@ -83,6 +83,9 @@ python -m scripts.setup_vk_ads_mcp --token <CLICK_RU_TOKEN> --vk-account-id <ID>
 | Залив кампании (Шаг 11, путь A) | `vk_ads_ad_plans_create` с nested `campaigns: [...]` → `banners: [...]` — один атомарный вызов. Либо `vk_ads_ad_plans_create` → `vk_ads_campaigns_create(ad_plan_id=..., banners=[...])` по одной группе за вызов. Отдельного создания баннера нет |
 | Пауза/запуск, бюджет (lifecycle) | `vk_ads_campaigns_set_status`, `vk_ads_campaigns_update`, `vk_ads_ad_plans_update` |
 | CRM-аудитории и пиксели | `vk_ads_users_lists_*`, `vk_ads_remarketing_pixels_*` |
+| Выбор пакета размещения (Шаг 11, обязателен) | `vk_ads_packages_list(objective=...)` → `id` активного пакета. Всего ~174 пакета, фильтруй по `objective`; значения — в `available_objectives` ответа |
+| Резолв гео в `region_id` (Шаги 6.5, 11) | `vk_ads_regions_search(query="<город>")` → `items[].id` в `targetings.geo.regions` |
+| Повторная модерация отклонённых | `vk_ads_banners_list(fields="id,user_can_request_remoderation")` → `vk_ads_banners_remoderate(banner_ids=[...])` |
 | Отчёты за период | `vk_ads_statistics_summary` (агрегат) / `vk_ads_statistics_day` (по дням). Оба требуют явный список `ids` — режима «по всему кабинету» нет, сначала `vk_ads_campaigns_list`. Асинхронных отчётов и разрезов в MCP нет |
 
 ## Терминология (UI vs API)
@@ -102,6 +105,12 @@ python -m scripts.setup_vk_ads_mcp --token <CLICK_RU_TOKEN> --vk-account-id <ID>
 - Lookalike как отдельная сущность недоступен — используй сегменты, пиксели и списки пользователей.
 - У сервера нет встроенной точки подтверждения: вызов на изменение уходит в API сразу. Все сущности создавай в `status: "blocked"`; активация — только маркетологом в кабинете.
 - ВК ограничивает число активных OAuth-токенов (≤5); при ошибке `token_limit_exceeded` — `vk_ads_token_revoke`.
+- **У `ad_plan` нет `set_status`.** Пауза/запуск «Кампании» целиком — только `vk_ads_ad_plans_update`
+  с `{"status": ...}`. У `campaign` метод есть.
+- **`package_id` обязателен при создании группы** и определяет формат, площадки и модель оплаты
+  (`priced_event_type`: 0 = CPM, 1 = CPC, 30 = oCPM). После создания не меняется — другая модель
+  оплаты означает новую группу.
+- **В выдаче `packages_list` встречаются пакеты со `status: "blocked"`** — фильтруй по `active`.
 
 ## Особенности ответов сервера
 
