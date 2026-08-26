@@ -407,7 +407,13 @@ class BannersAPI:
         return self.client.request("GET", f"/banners/{banner_id}.json")
 
     def create(self, payload: dict) -> dict:
-        """Создаёт ОБЪЯВЛЕНИЕ. Привязывается к campaign_id (к ГРУППЕ), НЕ к ad_plan_id."""
+        """Создаёт ОБЪЯВЛЕНИЕ. Привязывается к campaign_id (к ГРУППЕ), НЕ к ad_plan_id.
+
+        ⚠️ НЕ СВЕРЕНО. vk-ads-mcp не предоставляет отдельного создания баннера и утверждает,
+        что POST /banners в API нет. Этот метод конфликтует с тем утверждением.
+        Проверяется одним живым write-вызовом: создать баннер в существующей группе и сразу удалить.
+        До проверки предпочитай вложенный массив `banners` внутри payload группы.
+        """
         if payload.get("ad_plan_id") and not payload.get("campaign_id"):
             raise VKAdsError(
                 "banner привязывается к campaign_id (группе), а не к ad_plan_id. "

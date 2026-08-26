@@ -166,7 +166,7 @@ Lifecycle-сценарии — **`references/lifecycle-runbook.md`**.
 - `scripts/video_providers/` — провайдер-абстракция: `runway.py`, `kling.py`, `veo.py` (Google AI Studio), `aismm.py` (generic). Все 4 реализованы.
 - `scripts/video_concat.py` — FFmpeg-обёртка: склейка сегментов в длинное видео, извлечение последнего кадра (для chain-segments), overlay-текст. CLI: `python -m scripts.video_concat {check,concat,last-frame,overlay-text}`.
 - `scripts/video_providers/replicate.py` — **рекомендуемый дефолт для тестирования и гибкости**. Универсальный провайдер: один ключ Replicate → доступ к десяткам видео-моделей (Kling, Hunyuan, Seedance, Wan, Hailuo, Veo). Модель задаётся через `--model <slug>`. См. `references/replicate-models.md` для каталога.
-- `scripts/deploy_campaign.py` (M4) — **end-to-end залив в кабинет VK Реклама**. Читает creatives.json + audiences.json + assets/images/ + assets/videos/, загружает медиа, создаёт campaign + ad_plans + banners — всё в `status=blocked`. Никогда не активирует — это делает пользователь через UI после прохождения Сценария 10.
+- `scripts/deploy_campaign.py` (M4) — **end-to-end залив в кабинет VK Реклама**. Читает creatives.json + audiences.json + assets/images/ + assets/videos/, загружает медиа, создаёт ad_plan + campaigns + banners — всё в `status=blocked`. Никогда не активирует — это делает пользователь через UI после прохождения Сценария 10.
 - `scripts/generate_lead_magnet_pdfs.py` (M3) — **генератор PDF lead magnet** для eBook-креативов. Читает markdown из `assets/pdf_content/<creative>.md` (создаёт Claude в диалоге с пользователем), собирает в PDF через ReportLab, использует обложки от M1 если есть. См. `references/pdf-generation.md`.
 - `scripts/pdf_builder.py` — низкоуровневый ReportLab builder (обложка/тело markdown/CTA).
 - `scripts/package_skill.py` — упаковщик скилла в `.skill` файл для распространения. Запуск: `python -m scripts.package_skill` или двойной клик `package.bat` (Windows) / `./package.sh` (Unix). Исключает `evals/`, `assets/`, рабочие папки кампаний, кэши Python.
@@ -283,7 +283,9 @@ VK Реклама визуально-первичная — карточки в 
 - Триггеры покупки
 - **5-10 точных гипотез аудиторий** (это гипотезы, не финальные настройки)
 
-**Если API доступен** — `vk_ads_api.py audiences-list` от похожих кампаний. Не дублируй уже залитые. См. `references/audiences-and-lookalike.md`.
+**Если API доступен** — посмотри, что уже есть: `vk_ads_remarketing_segments_list` (сегменты)
+и `vk_ads_users_lists_list` (загруженные CRM-базы). Через наш REST — `vk_ads_api.py audiences-list`.
+Не дублируй уже залитые. См. `references/audiences-and-lookalike.md`.
 
 **Артефакт:** `06_personas.md` — для каждой персоны блок «Гипотезы аудиторий».
 
@@ -315,6 +317,7 @@ VK Реклама визуально-первичная — карточки в 
    - Тип аудитории VK (LAL, intent, custom, key phrases, retargeting)
    - Размер (примерный)
    - Источник данных (если custom — какая база; если LAL — от чего)
+   - Географию — **названия городов/регионов словами**; числовые `region_id` для API резолвишь позже через `vk_ads_regions_search` (Шаг 11) и фиксируешь маппинг в `_state.json`
 
 5. **Покажи матрицу пользователю.** Очень важная точка контроля.
 
@@ -365,6 +368,11 @@ VK Реклама визуально-первичная — карточки в 
 - Инструкцию: где взять `pixel_id` в кабинете → куда вставить → как проверить (`vk_ads_pixel_check.html`)
 
 **Артефакт:** `07a_pixel_setup.md` с готовым кодом и пошаговой инструкцией.
+
+**Если MCP подключён** — пиксель можно создать не руками: `vk_ads_remarketing_pixels_create(payload={...})`,
+затем `vk_ads_remarketing_pixels_list` для проверки и получения `pixel_id`. Установка кода на сайт
+и проверка срабатываний всё равно остаются за человеком — API отдаёт факт существования счётчика,
+а не поток событий.
 
 **Гейт:** перед запуском кампании пользователь должен подтвердить «пиксель стоит, события ловятся».
 
@@ -772,12 +780,31 @@ python -m scripts.generate_creative_videos \
 **Если инструменты MCP-сервера `vk-ads` есть** (в одной среде они видны с префиксом `mcp__vk-ads__`, в другой имена выглядят иначе — ищи по короткому имени: `vk_ads_ad_plans_create`, `vk_ads_content_upload_image`):
 
 0. **Выбор кабинета:** если в режиме click.ru доступно несколько кабинетов — `vk_ads_accounts_list`, покажи список пользователю, зафиксируй выбранный `account_id` и передавай его в каждый последующий вызов.
+0.1. **Пакет размещения (`package_id`) — обязателен, без него создание группы падает.**
+   `vk_ads_packages_list(objective="<цель>")` → выбери пакет и зафиксируй его `id` в `_state.json`.
+   Правила отбора: (1) только `status: "active"` — в выдаче встречаются `blocked`;
+   (2) `priced_event_type` определяет модель оплаты — `0` = CPM, `1` = CPC, `30` = oCPM;
+   (3) при равных условиях бери пакет с `banner_format_id: 0` (мультиформат) —
+   он не привязывает тебя к одному формату креатива.
+   Всего на сервере ~174 пакета, поэтому **всегда фильтруй по `objective`**, не тяни полный список.
+   Доступные значения `objective` приходят в поле `available_objectives` того же ответа;
+   для воронки этого скилла рабочие — `leadads` (лид-формы) и `site_conversions` (конверсии на сайте).
+   Покажи пользователю выбранный пакет словами («оплата за показы, мультиформат») и подтверди.
+
+0.2. **Гео → `region_id`.** `targetings.geo.regions` принимает **числовые id**, а не названия.
+   Для каждого города/региона из `audiences.json` — `vk_ads_regions_search(query="<название>")`,
+   возьми `id` из `items`. Полное дерево (`vk_ads_dictionary_get(name="regions")`) не тяни — оно
+   большое (5500+ регионов). Ничего не нашлось или нашлось несколько — **спроси пользователя**,
+   какой регион имелся в виду, не угадывай. Зафиксируй маппинг «название → id» в `_state.json`.
 1. **Пре-флайт по каждой ссылке.** До загрузки проверь URL: HEAD-запрос должен вернуть `Content-Type: image/jpeg` или `image/png`. Вернулся `text/html` — это страница просмотрщика (типовой случай: шаренная ссылка Google Drive / Яндекс.Диска), файл по ней не скачается. Вернулась ошибка или таймаут — ссылка приватная либо во внутренней сети. В обоих случаях **не вызывай загрузку**: покажи пользователю конкретную ссылку и запроси замену по правилам из `references/vk-ads-specs.md`. Ни одной битой ссылки на входе в залив.
 2. **Загрузка медиа:** для каждой картинки/видео — `vk_ads_content_upload_image` / `vk_ads_content_upload_video`, параметр `source_path_or_url`. ⚠️ **Хостовый сервер (aihub.click.ru) не читает локальные файлы** — только публичный http(s)-URL. Файлы из `assets/images/` сначала выложи по ссылке (или залив медиа делай через путь B — `deploy_campaign.py` умеет локальные файлы). **Сохраняй возвращённые `id`: API не отдаёт список ранее загруженного контента, потерянный ID означает повторную заливку и мусор в хранилище.**
 3. **Создание ad_plan (UI «Кампания», верхний уровень):** `vk_ads_ad_plans_create` с `payload`, где nested `campaigns: [...]` (по числу аудиторий) и nested `banners: [...]` внутри каждой campaign. Один атомарный вызов — избегаем orphan'ов.
 4. **Альтернатива (если атомарный payload слишком большой):** `vk_ads_ad_plans_create` → потом `vk_ads_campaigns_create(ad_plan_id=..., banners=[...])` по одной группе за вызов. ⚠️ Баннеры передаются **внутри** payload группы: отдельного `banners_create` в API нет, «долить» объявления в уже созданную группу невозможно. Группа, созданная без `banners`, навсегда останется пустой — её придётся удалять и пересоздавать.
 5. **Все объекты в `status: "blocked"`** — никогда не активируй сам.
-6. **Проверка:** `vk_ads_ad_plans_get(id=...)`, затем по каждой группе `vk_ads_ad_groups_get(ad_group_id=..., fields="id,name,status,banners,issues")`. **Обязательно убедись, что `banners` не пустой.** Пустой массив + issue `NO_BANNERS_WITH_ACTIVE_STATUS` означает, что залив креативов провалился — сообщи пользователю и не выдавай ссылку как успешный результат.
+6. **Проверка:** `vk_ads_ad_plans_get(ad_plan_id=...)`, затем по каждой группе `vk_ads_ad_groups_get(ad_group_id=..., fields="id,name,status,banners,issues")`. **Обязательно убедись, что `banners` не пустой.** Пустой массив + issue `NO_BANNERS_WITH_ACTIVE_STATUS` означает, что залив креативов провалился — сообщи пользователю и не выдавай ссылку как успешный результат.
+   Полезные поля для диагностики: `vk_ads_campaigns_list(fields="id,name,status,objective,budget_limit,budget_limit_day,ad_plan_id,package_id,targetings,issues")`
+   — `issues` показывает словами, почему группа не крутится (`NO_BANNERS_WITH_ACTIVE_STATUS`,
+   `NO_MONEY`, `AD_PLAN_STOPPED`, `STOPPED`).
 7. **Дай ссылку:** `https://ads.vk.ru/hq/campaign/<ad_plan_id>` (в URL это всё ещё `/campaign/`, исторически).
 
 **Если MCP-инструментов нет** — предложи подключение к хостовому серверу за 2 минуты (ничего клонировать и ставить не надо):
@@ -813,9 +840,9 @@ python -m scripts.setup_vk_ads_mcp --token <CLICK_RU_TOKEN> --vk-account-id <ID_
    ```
    Что произойдёт:
    - Загрузит все медиа из `assets/images/` и `assets/videos/`
-   - Создаст campaign (status=blocked)
-   - Создаст ad_plans (по числу аудиторий, всё blocked)
-   - Создаст banners с привязкой медиа (всё blocked)
+   - Создаст ad_plan — «Кампанию» верхнего уровня (status=blocked)
+   - Создаст campaigns — «Группы объявлений» по числу аудиторий, каждая с `ad_plan_id` (всё blocked)
+   - Создаст banners — «Объявления» с привязкой медиа, каждое с `campaign_id` (всё blocked)
    - Запишет в `operations_log.md`
    - Сохранит `assets/deploy_plan.json` со всеми ID
 
@@ -871,7 +898,7 @@ python -m scripts.generate_launch_guide --workspace <path>
 
 - ❌ Не создаёт lookalike audiences (требуют source — у первого запуска нет)
 - ❌ Не загружает CRM-базы (нужны CSV — опциональная отдельная команда)
-- ❌ Не создаёт пиксель (это делается через UI Шаг 7а + клиент)
+- ❌ Не создаёт пиксель — путь B этого не умеет. Через MCP умеет: `vk_ads_remarketing_pixels_create` (см. Шаг 7а)
 - ❌ Не активирует кампанию — только пользователь
 
 ---
@@ -882,7 +909,9 @@ python -m scripts.generate_launch_guide --workspace <path>
 
 **Когда:** через 5-7 дней после активации. Триггер: «прошла неделя», «оптимизация VK».
 
-1. `GET /statistics/campaigns/{id}/day.json?date_from=...&date_to=...` (см. `vk-ads-api.md`).
+1. Статистика за период: `vk_ads_statistics_day(entity="campaigns", ids="<id через запятую>", date_from=..., date_to=...)`.
+   ⚠️ `ids` обязателен — режима «по всему кабинету» нет, сначала `vk_ads_campaigns_list`.
+   MCP недоступен — прямой REST `GET /statistics/campaigns/{id}/day.json` (см. `vk-ads-api.md`).
 2. По каждой группе:
    - CTR < 0.3% + Impressions > 5000 → креатив устарел / аудитория не та → перезалить или выключить
    - CTR > 1.5% + Clicks > 50 → масштабировать (увеличить бюджет в 1.5-2x)
@@ -893,7 +922,15 @@ python -m scripts.generate_launch_guide --workspace <path>
 5. `11_optimization.md` с конкретным action plan по каждой группе.
 6. С согласия — изменения через `vk_ads_api.py`. Никогда не удаляй сущности — только пауза.
 
-**Безопасность:** не вызывай `*_delete`, `campaigns/activate` автоматически. Только `*_update` и `audiences/create`.
+**Безопасность.** Никогда не вызывай автоматически:
+`vk_ads_*_delete` (любые), `vk_ads_campaigns_set_status(status="active")`,
+`vk_ads_ad_plans_update({"status": "active"})`, `vk_ads_banners_update({"status": "active"})`.
+Разрешено без отдельного «запускай»: чтение, `*_update` неструктурных полей после «ОК»,
+создание сегментов и списков.
+
+⚠️ У `ad_plan` **нет** метода `set_status` — пауза и запуск «Кампании» целиком идут только
+через `vk_ads_ad_plans_update({"status": "blocked"|"active"})`. У `campaign` метод есть:
+`vk_ads_campaigns_set_status`.
 
 ---
 
@@ -955,7 +992,8 @@ python -m scripts.generate_strategy_report --workspace <path> --docx
 
 | Не умеет через API | Фолбек |
 |---|---|
-| Создать пиксель (только использовать готовый) | UI ads.vk.ru |
+| ~~Создать пиксель~~ — **умеет**: `vk_ads_remarketing_pixels_create` | — (фолбек не нужен) |
+| Проверить, что пиксель стреляет | Только UI / браузер — API отдаёт факт существования, а не события |
 | Загрузка events через UI (manual) | UI или Conversion API (отдельная интеграция) |
 | Сложные правила автоматизации | UI или внешний скрипт на cron |
 | Дублирование с правкой одного поля | API копирует + апдейт отдельно |
