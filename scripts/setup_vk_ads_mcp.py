@@ -6,7 +6,7 @@ setup_vk_ads_mcp.py — подключает хостовый MCP «VK Рекл�
 (с бэкапом; существующие серверы сохраняются).
 
 Сервер:
-- vk-ads → https://vkads-mcp.aihub.click.ru/mcp (48 инструментов VK Ads API, имена vk_ads_*)
+- vk-ads → https://vkads-mcp.aihub.click.ru/mcp (45 инструментов VK Ads API, имена vk_ads_*)
 
 Авторизация (один из вариантов):
 A. Через click.ru (основной): --token <CLICK_RU_TOKEN> + --vk-account-id <ID>
