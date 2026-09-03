@@ -2,6 +2,15 @@
 
 Версии — [semver](https://semver.org/lang/ru/): до 1.0 состав шагов и материалов может меняться.
 
+## 0.6.5 — 2026-09-03
+
+Установщик MCP подключает и коннектор KeepImage; уточнены факты авторизации KeepImage (сверено с сервером).
+
+- **`scripts/setup_vk_ads_mcp.py`:** по пути click.ru вместе с `vk-ads` подключает коннектор `keepimage` (`https://storage.aihub.click.ru/mcp`, header `X-Auth-Token` — токен не светится в URL/выводе). Флаг `--no-keepimage` отключает; `--remove` снимает оба сервера (если не задан `--no-keepimage`). На пути `--vk-ads-token` и при `--dry-run` KeepImage не трогается.
+- **Сверено с сервером KeepImage (03.09.2026):** токен — тот же click.ru (сервер подтверждает в ошибке 401), принимается тремя равнозначными способами — `X-Auth-Token`, `Authorization: Bearer` и токен в пути `/c/<token>/…`; и HTTP `/v1/objects`, и `/mcp` отдают `200` на любом из них. Скрипт `upload_creatives_to_storage.py` (header `X-Auth-Token`) — корректен, правок не требовал.
+- **`scripts/credentials.py`:** `format_hint` для `clickru` исправлен (не JWT, а 32-символьный hex-токен click.ru).
+- Документация (`docs/hosted-mcp-setup.md`, `SKILL.md`) и тесты установщика обновлены.
+
 ## 0.6.4 — 2026-09-03
 
 Установщик MCP сохраняет токен click.ru в реестр ключей — скрипт заливки картинок работает без отдельного `manage_credentials set clickru`.

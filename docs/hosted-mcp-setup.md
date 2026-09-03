@@ -22,7 +22,7 @@
 | `yandex-direct` | `Authorization: Bearer <CLICK_RU_TOKEN>`, `X-Client-Login: <логин Директа>`; для мастер-аккаунта click.ru добавить `X-Click-Ru-User-Id` |
 | `yandex-wordstat` | `Authorization: Bearer <CLICK_RU_TOKEN>` (токен проверяется шлюзом через click.ru; ключ Yandex Cloud не нужен — он на стороне сервера) |
 | `vk-ads` | `X-Click-Ru-Token: <CLICK_RU_TOKEN>`, `X-Click-Ru-Account-Id: <ID аккаунта VK Рекламы в click.ru>` |
-| `KeepImage` | `X-Auth-Token: <CLICK_RU_TOKEN>` (или токен в адресе: `/c/<CLICK_RU_TOKEN>[/<user-id>]/mcp`); мастер-аккаунту добавить `X-Auth-UserId: <ID пользователя>`. Тот же токен click.ru, что и у `vk-ads`. Скрипт `scripts/upload_creatives_to_storage.py` ходит в KeepImage по HTTP напрямую и коннектора не требует — ему нужен токен `clickru` в реестре ключей (`manage_credentials set clickru`) |
+| `KeepImage` | Токен click.ru любым из трёх равнозначных способов (проверено на сервере): заголовок `X-Auth-Token: <CLICK_RU_TOKEN>`, `Authorization: Bearer <CLICK_RU_TOKEN>` или токен в адресе `/c/<CLICK_RU_TOKEN>[/<user-id>]/mcp`. Мастер-аккаунту добавить `X-Auth-UserId: <ID пользователя>`. **Тот же токен click.ru, что и у `vk-ads`** — сервер сам это подтверждает в ошибке 401. Установщик `setup_vk_ads_mcp.py` по пути click.ru подключает коннектор `keepimage` header-способом; скрипт `scripts/upload_creatives_to_storage.py` ходит в KeepImage по HTTP с `X-Auth-Token` (коннектор ему не нужен) |
 
 Примечания:
 
@@ -52,7 +52,11 @@ python -m scripts.setup_vk_ads_mcp \
 
 Установщик **не запускает никаких процессов** и не требует Bun — он только дописывает `mcpServers` в конфиги (с бэкапом, существующие серверы сохраняются).
 
-При подключении по пути click.ru установщик заодно сохраняет токен click.ru в реестр ключей (`clickru`, а с `--click-ru-user-id` — ещё и `clickru_user_id`), поэтому скрипт `scripts/upload_creatives_to_storage.py` работает сразу после подключения MCP — отдельный `manage_credentials set clickru` больше не нужен. Не сохраняется при `--dry-run`, `--remove` и на пути с готовым `--vk-ads-token`.
+При подключении по пути click.ru установщик заодно:
+- подключает коннектор `keepimage` (`https://storage.aihub.click.ru/mcp`, header `X-Auth-Token`) — инструмент `storage_publish_image` для заливки картинок в средах без запуска кода. Отключить: `--no-keepimage`. Снимается вместе с `vk-ads` при `--remove` (если не задан `--no-keepimage`);
+- сохраняет токен click.ru в реестр ключей (`clickru`, а с `--click-ru-user-id` — ещё и `clickru_user_id`), поэтому скрипт `scripts/upload_creatives_to_storage.py` работает сразу — отдельный `manage_credentials set clickru` не нужен.
+
+Ни то, ни другое не выполняется при `--dry-run` (только сообщается) и на пути с готовым `--vk-ads-token` (токен click.ru не используется).
 
 ## Ручная настройка
 

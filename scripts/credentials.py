@@ -65,7 +65,7 @@ SERVICE_REGISTRY = {
         "env": "CLICK_RU_TOKEN",
         "description": "Click.ru — токен прокси-доступа (тот же, что у хостового MCP VK); нужен для заливки локальных картинок в хранилище KeepImage",
         "how_to_get": "https://click.ru/userinfo.html → «API Token» → «Создать»",
-        "format_hint": "JWT-токен",
+        "format_hint": "32-символьный hex-токен click.ru (напр. 011a…2380)",
     },
     "clickru_user_id": {
         "env": "CLICK_RU_USER_ID",

@@ -48,6 +48,12 @@ except ImportError:  # запуск напрямую, не как модуль �
 VK_ADS_URL = "https://vkads-mcp.aihub.click.ru/mcp"
 VK_ADS_SERVER = "vk-ads"
 
+# KeepImage — временное хранилище картинок (тот же токен click.ru). Сервер принимает
+# токен и в заголовке `X-Auth-Token`, и в пути `/c/<token>/mcp`; используем заголовок,
+# чтобы не светить токен в URL/выводе (единообразно с vk-ads).
+KEEPIMAGE_URL = "https://storage.aihub.click.ru/mcp"
+KEEPIMAGE_SERVER = "keepimage"
+
 
 # ---------- пути конфигов ----------
 
@@ -94,13 +100,20 @@ def vk_headers(token: str | None, account_id: str | None, user_id: str | None,
     return headers
 
 
-def build_entry(target: str, headers: dict) -> dict:
+def keepimage_headers(token: str, user_id: str | None) -> dict:
+    headers = {"X-Auth-Token": token}
+    if user_id:
+        headers["X-Auth-UserId"] = user_id
+    return headers
+
+
+def build_entry(target: str, url: str, headers: dict) -> dict:
     if target == "claude-desktop":
-        args = ["-y", "mcp-remote", VK_ADS_URL]
+        args = ["-y", "mcp-remote", url]
         for key, value in headers.items():
             args += ["--header", f"{key}: {value}"]
         return {"command": "npx", "args": args}
-    entry = {"url": VK_ADS_URL, "headers": headers}
+    entry = {"url": url, "headers": headers}
     if target == "claude-code":
         entry = {"type": "http", **entry}
     return entry
@@ -147,24 +160,27 @@ def mask_entry(entry: dict) -> dict:
     return entry
 
 
-def apply_entry(config_path: Path, entry: dict, *, remove: bool, dry_run: bool) -> None:
+def apply_entries(config_path: Path, entries: dict, *, remove: bool, dry_run: bool) -> None:
+    """entries: {server_name: entry}. На --remove значения игнорируются, ключи снимаются."""
     config = load_json(config_path)
     servers = config.setdefault("mcpServers", {})
     if not isinstance(servers, dict):
         raise SystemExit(f"{config_path}: поле mcpServers не объект, правлю вручную не буду")
 
     if remove:
-        if servers.pop(VK_ADS_SERVER, None) is not None:
-            print(f"  - {VK_ADS_SERVER}: удалён")
-        else:
-            print(f"  - {VK_ADS_SERVER}: не был записан, пропускаю")
+        for name in entries:
+            if servers.pop(name, None) is not None:
+                print(f"  - {name}: удалён")
+            else:
+                print(f"  - {name}: не был записан, пропускаю")
         if not servers:
             config.pop("mcpServers", None)
     else:
-        replaced = VK_ADS_SERVER in servers
-        servers[VK_ADS_SERVER] = entry
-        print(f"  - {VK_ADS_SERVER}: {'перезаписан' if replaced else 'добавлен'}")
-        print(f"    {json.dumps(mask_entry(entry), ensure_ascii=False)}")
+        for name, entry in entries.items():
+            replaced = name in servers
+            servers[name] = entry
+            print(f"  - {name}: {'перезаписан' if replaced else 'добавлен'}")
+            print(f"    {json.dumps(mask_entry(entry), ensure_ascii=False)}")
 
     if dry_run:
         print(f"[dry-run] Не пишу в {config_path}.")
@@ -188,8 +204,12 @@ def main(argv: list[str] | None = None) -> int:
         choices=["cursor", "cursor-project", "claude-code", "claude-desktop", "all"],
         help="Куда писать конфиг. Можно несколько раз. По умолчанию: cursor",
     )
-    parser.add_argument("--remove", action="store_true", help="Удалить запись vk-ads из конфигов")
+    parser.add_argument("--remove", action="store_true", help="Удалить записи vk-ads и keepimage из конфигов")
     parser.add_argument("--dry-run", action="store_true", help="Показать, что будет записано, без записи")
+    parser.add_argument(
+        "--no-keepimage", action="store_true",
+        help="Не трогать коннектор KeepImage (по умолчанию на пути click.ru он добавляется/снимается вместе с vk-ads)",
+    )
     args = parser.parse_args(argv)
 
     targets = args.target or ["cursor"]
@@ -212,8 +232,16 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         headers = vk_headers(token, account_id, args.click_ru_user_id, vk_ads_token)
 
+    # KeepImage подключаем по пути click.ru (тот же токен). С готовым --vk-ads-token
+    # токена click.ru нет — KeepImage не трогаем. Флаг --no-keepimage отключает и на снятии.
+    manage_keepimage = not args.no_keepimage
+    add_keepimage = manage_keepimage and not args.remove and bool(token) and not vk_ads_token
+    kp_headers = keepimage_headers(token, args.click_ru_user_id or os.environ.get("CLICK_RU_USER_ID")) if add_keepimage else {}
+
     print("=== Хостовый MCP «VK Реклама» ===")
     print(f"Сервер: {VK_ADS_SERVER} → {VK_ADS_URL}")
+    if add_keepimage:
+        print(f"        {KEEPIMAGE_SERVER} → {KEEPIMAGE_URL} (хранилище картинок, тот же токен click.ru)")
     print(f"Цели:   {', '.join(targets)}")
     print()
 
@@ -225,7 +253,17 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[{target}] {path}")
         if target == "claude-desktop" and not args.remove:
             print("  Формат: stdio-мост npx mcp-remote (нужен Node.js в PATH)")
-        apply_entry(path, build_entry(target, headers), remove=args.remove, dry_run=args.dry_run)
+
+        if args.remove:
+            entries = {VK_ADS_SERVER: None}
+            if manage_keepimage:
+                entries[KEEPIMAGE_SERVER] = None
+        else:
+            entries = {VK_ADS_SERVER: build_entry(target, VK_ADS_URL, headers)}
+            if add_keepimage:
+                entries[KEEPIMAGE_SERVER] = build_entry(target, KEEPIMAGE_URL, kp_headers)
+
+        apply_entries(path, entries, remove=args.remove, dry_run=args.dry_run)
         print()
 
     # Токен click.ru → реестр ключей, чтобы scripts/upload_creatives_to_storage.py
@@ -269,6 +307,8 @@ def main(argv: list[str] | None = None) -> int:
     if "claude-code" in targets:
         print("1. Claude Code: новая сессия подхватит .mcp.json автоматически.")
     print("2. Проверь связь: вызови vk_ads_auth_check — должен вернуть данные пользователя VK Ads.")
+    if add_keepimage:
+        print("   KeepImage: инструмент storage_publish_image (или скрипт upload_creatives_to_storage.py) — заливка картинок.")
     print("3. Ошибка «Не заданы креды» = не дошли заголовки; 401 — токен недействителен.")
     print()
     print("Справочник подключения: docs/hosted-mcp-setup.md")
