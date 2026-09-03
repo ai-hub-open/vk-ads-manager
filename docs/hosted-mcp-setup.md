@@ -52,6 +52,8 @@ python -m scripts.setup_vk_ads_mcp \
 
 Установщик **не запускает никаких процессов** и не требует Bun — он только дописывает `mcpServers` в конфиги (с бэкапом, существующие серверы сохраняются).
 
+При подключении по пути click.ru установщик заодно сохраняет токен click.ru в реестр ключей (`clickru`, а с `--click-ru-user-id` — ещё и `clickru_user_id`), поэтому скрипт `scripts/upload_creatives_to_storage.py` работает сразу после подключения MCP — отдельный `manage_credentials set clickru` больше не нужен. Не сохраняется при `--dry-run`, `--remove` и на пути с готовым `--vk-ads-token`.
+
 ## Ручная настройка
 
 ### Cursor — глобально `~/.cursor/mcp.json` или проектно `.cursor/mcp.json`

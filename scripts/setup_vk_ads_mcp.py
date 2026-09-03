@@ -39,6 +39,12 @@ import shutil
 import sys
 from pathlib import Path
 
+try:
+    from scripts.credentials import set_api_key
+except ImportError:  # запуск напрямую, не как модуль пакета
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+    from scripts.credentials import set_api_key
+
 VK_ADS_URL = "https://vkads-mcp.aihub.click.ru/mcp"
 VK_ADS_SERVER = "vk-ads"
 
@@ -169,7 +175,7 @@ def apply_entry(config_path: Path, entry: dict, *, remove: bool, dry_run: bool) 
 
 # ---------- main ----------
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Подключить хостовый MCP «VK Реклама» (vkads-mcp.aihub.click.ru) к Cursor, Claude Code, Claude Desktop",
     )
@@ -184,7 +190,7 @@ def main() -> int:
     )
     parser.add_argument("--remove", action="store_true", help="Удалить запись vk-ads из конфигов")
     parser.add_argument("--dry-run", action="store_true", help="Показать, что будет записано, без записи")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     targets = args.target or ["cursor"]
     if "all" in targets:
@@ -221,6 +227,36 @@ def main() -> int:
             print("  Формат: stdio-мост npx mcp-remote (нужен Node.js в PATH)")
         apply_entry(path, build_entry(target, headers), remove=args.remove, dry_run=args.dry_run)
         print()
+
+    # Токен click.ru → реестр ключей, чтобы scripts/upload_creatives_to_storage.py
+    # работал сразу после подключения MCP (без отдельного `manage_credentials set clickru`).
+    # Только путь click.ru: с готовым --vk-ads-token токен click.ru не используется.
+    if not args.remove and token and not vk_ads_token:
+        user_id = args.click_ru_user_id or os.environ.get("CLICK_RU_USER_ID")
+        if args.dry_run:
+            extra = " + clickru_user_id" if user_id else ""
+            print(
+                f"[dry-run] Токен click.ru был бы сохранён в реестр ключей как "
+                f"'clickru'{extra} — для scripts/upload_creatives_to_storage.py."
+            )
+            print()
+        else:
+            try:
+                set_api_key("clickru", token)
+                saved = ["clickru"]
+                if user_id:
+                    set_api_key("clickru_user_id", user_id)
+                    saved.append("clickru_user_id")
+                print(
+                    f"✓ токен click.ru сохранён в реестр ключей ({', '.join(saved)}, "
+                    f"{mask(token)}) — upload_creatives_to_storage.py готов к работе"
+                )
+            except Exception as e:
+                print(
+                    f"⚠ конфиг MCP записан, но токен не сохранён в реестр: {e}\n"
+                    f"  выполни вручную: python -m scripts.manage_credentials set clickru"
+                )
+            print()
 
     if args.remove or args.dry_run:
         return 0
