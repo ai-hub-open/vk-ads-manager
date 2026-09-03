@@ -79,7 +79,7 @@ python -m scripts.setup_vk_ads_mcp --token <CLICK_RU_TOKEN> --vk-account-id <ID>
 | Выбор кабинета (режим click.ru, мультиаккаунт) | `vk_ads_accounts_list` → `account_id` передавать в каждый последующий вызов |
 | Аудит аккаунта (Шаг 0.5) | `vk_ads_auth_check`, `vk_ads_account_info`, `vk_ads_ad_plans_list` |
 | Фактические CPM/CTR для прогноза (Шаг 9.5) | `vk_ads_statistics_summary`, `vk_ads_statistics_day` (entity `campaigns`/`ad_groups`/`banners`, `ids`, `date_from`/`date_to`) |
-| Загрузка креативов (Шаг 11) | `vk_ads_content_upload_image` / `vk_ads_content_upload_video`, параметр `source_path_or_url` — **на хосте только публичный http(s)-URL** (см. ниже) |
+| Загрузка креативов (Шаг 11) | `vk_ads_content_upload_image` / `vk_ads_content_upload_video`, параметр `source_path_or_url` — **на хосте только публичный http(s)-URL**; локальные картинки выкладывай через мост KeepImage (`scripts/upload_creatives_to_storage.py`), см. ниже |
 | Залив кампании (Шаг 11, путь A) | `vk_ads_ad_plans_create` с nested `campaigns: [...]` → `banners: [...]` — один атомарный вызов. Либо `vk_ads_ad_plans_create` → `vk_ads_campaigns_create(ad_plan_id=..., banners=[...])` по одной группе за вызов. Отдельного создания баннера нет |
 | Пауза/запуск, бюджет (lifecycle) | `vk_ads_campaigns_set_status`, `vk_ads_campaigns_update`, `vk_ads_ad_plans_update` |
 | CRM-аудитории и пиксели | `vk_ads_users_lists_*`, `vk_ads_remarketing_pixels_*` |
@@ -100,7 +100,7 @@ python -m scripts.setup_vk_ads_mcp --token <CLICK_RU_TOKEN> --vk-account-id <ID>
 
 ## Ограничения хостового режима
 
-- **Локальные файлы недоступны.** `vk_ads_content_upload_image/video` на хосте принимают только публичный http(s)-URL (чтение файлов с диска сервера выключено, приватные сети блокируются как SSRF-защита). Картинки из `assets/images/` сначала выложи по публичной ссылке — или заливай медиа через путь B (`scripts/deploy_campaign.py` работает с локальными файлами). Правила к ссылкам, которые надо предъявлять клиенту, — в `references/vk-ads-specs.md` → «Требования к ссылкам на изображения от клиента».
+- **Локальные файлы недоступны.** `vk_ads_content_upload_image/video` на хосте принимают только публичный http(s)-URL (чтение файлов с диска сервера выключено, приватные сети блокируются как SSRF-защита). Картинки из `assets/images/` сначала выкладывай в хранилище **KeepImage** — `python -m scripts.upload_creatives_to_storage --workspace <path>` даёт публичные ссылки (`assets/storage_manifest.json`, живут ≤2 ч), их и передавай в `source_path_or_url`. Среда без запуска кода — MCP `storage_publish_image(data_base64=...)`. KeepImage хостит только картинки (PNG/JPEG/GIF/WebP) — **видео** заливай публичной ссылкой клиента или через путь B (`scripts/deploy_campaign.py` работает с локальными файлами). Правила к ссылкам, которые надо предъявлять клиенту, — в `references/vk-ads-specs.md` → «Требования к ссылкам на изображения от клиента». Подключение KeepImage — `docs/hosted-mcp-setup.md`.
 - Список ранее загруженных изображений/видео API не отдаёт — сохраняй ID из ответов загрузки.
 - Lookalike как отдельная сущность недоступен — используй сегменты, пиксели и списки пользователей.
 - У сервера нет встроенной точки подтверждения: вызов на изменение уходит в API сразу. Все сущности создавай в `status: "blocked"`; активация — только маркетологом в кабинете.

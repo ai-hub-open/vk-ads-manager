@@ -2,6 +2,30 @@
 
 Версии — [semver](https://semver.org/lang/ru/): до 1.0 состав шагов и материалов может меняться.
 
+## 0.6.3 — 2026-09-03
+
+Заливка локальных картинок по пути A (MCP) закрыта мостом-хранилищем KeepImage.
+
+- **Мост KeepImage.** Хостовый MCP VK не читает локальные файлы — `vk_ads_content_upload_image`
+  берёт только публичный http(s)-URL. Новый `scripts/upload_creatives_to_storage.py` выкладывает
+  картинки из `assets/images/` во временное хранилище `storage.aihub.click.ru` (ссылка ≤2 ч,
+  манифест `assets/storage_manifest.json`) — их URL идёт в `source_path_or_url`. Проверено
+  живьём 03.09.2026: KeepImage → `vk_ads_content_upload_image` → content id. Только картинки;
+  видео по-прежнему через путь B или публичную ссылку.
+- **Шаг 11, путь A, загрузка медиа** переписан: вместо «сначала выложи по ссылке» — конкретный
+  механизм (KeepImage-скрипт → манифест → `source_path_or_url`), MCP `storage_publish_image` как
+  фолбек для сред без кода.
+- **Шаг 10.5 (M1): приём своих картинок маркетолога** отдельной веткой Pre-flight 0, приоритет
+  над генерацией (файлы в `assets/images/` или публичные ссылки в `creatives.json`).
+- **`scripts/credentials.py`:** добавлены сервисы `clickru` и `clickru_user_id` (токен click.ru
+  для KeepImage — тот же, что у MCP VK).
+- **Новая способность среды** в матрице «Что нужно от среды»: загрузка картинок в хранилище,
+  с фолбеком на путь B / публичные ссылки.
+- **`references/vk-ads-mcp-integration.md`** и **`docs/hosted-mcp-setup.md`** дополнены KeepImage
+  (сервер, авторизация, механизм).
+- **Бутстрап тест-харнеса:** добавлены `pytest.ini`, `requirements-dev.txt`, `tests/conftest.py`
+  (изоляция HOME + запрет сети) и `tests/test_upload_creatives_to_storage.py` (14 кейсов).
+
 ## 0.6.2 — 2026-08-26
 
 Сверка с живым сервером доведена до lifecycle-режима и обвязки залива.

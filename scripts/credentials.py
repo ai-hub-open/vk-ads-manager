@@ -61,6 +61,18 @@ SERVICE_REGISTRY = {
         "how_to_get": "ads.vk.ru → Настройки → API → создать приложение → получить токен",
         "format_hint": "длинная строка ~100+ знаков",
     },
+    "clickru": {
+        "env": "CLICK_RU_TOKEN",
+        "description": "Click.ru — токен прокси-доступа (тот же, что у хостового MCP VK); нужен для заливки локальных картинок в хранилище KeepImage",
+        "how_to_get": "https://click.ru/userinfo.html → «API Token» → «Создать»",
+        "format_hint": "JWT-токен",
+    },
+    "clickru_user_id": {
+        "env": "CLICK_RU_USER_ID",
+        "description": "Click.ru — ID пользователя (X-Auth-UserId, для мастер-аккаунта KeepImage; опционально)",
+        "how_to_get": "Личный кабинет Click.ru",
+        "format_hint": "число",
+    },
     "runway": {
         "env": "RUNWAY_API_KEY",
         "description": "Runway ML API key для видео-генерации (M2)",
