@@ -202,12 +202,15 @@ python -m scripts.manage_credentials delete openai
 vk-ads-manager/
 ├── SKILL.md
 ├── README.md
+├── CHANGELOG.md
+├── LICENSE
 ├── requirements.txt
 ├── install.py
 ├── references/
 ├── scripts/
-├── dist/
-└── package.sh
+├── docs/
+├── package.sh
+└── package.bat
 ```
 
 Рабочие файлы кампании создаются отдельно от папки скилла.
