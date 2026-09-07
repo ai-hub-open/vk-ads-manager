@@ -1,4 +1,0 @@
-# Зависимости для разработки и прогона тестов.
-# Рантайм — в requirements.txt.
--r requirements.txt
-pytest>=8.0
