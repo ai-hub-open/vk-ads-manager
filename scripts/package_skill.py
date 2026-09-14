@@ -12,9 +12,9 @@ package_skill.py — упаковывает папку vk-ads-manager в .skill 
     └── references/
 
 Исключаются:
-    - __pycache__/, *.pyc, node_modules/
+    - __pycache__/, .pytest_cache/, *.pyc, node_modules/
     - .DS_Store, .git*
-    - evals/ (тестовые промпты — только для разработчиков скилла)
+    - evals/, tests/, pytest.ini, requirements-dev.txt (харнес разработчика)
     - assets/, vk-campaign-*/ (это рабочие папки кампаний, не скилл)
     - package.sh, package.bat, CHANGELOG.md (инструменты сборки и журнал репозитория)
 
@@ -51,6 +51,7 @@ except ImportError:  # запуск напрямую, не как модуль �
 # Что исключаем при упаковке
 EXCLUDE_DIRS = {
     "__pycache__",
+    ".pytest_cache",
     "node_modules",
     ".git",
     ".venv",
@@ -64,10 +65,12 @@ EXCLUDE_GLOBS = {"*.pyc", "*.pyo", "*.swp", "*.bak", "*.tmp"}
 EXCLUDE_FILES = {
     ".DS_Store", ".gitignore", "Thumbs.db",
     "package.sh", "package.bat", "CHANGELOG.md",
+    "pytest.ini", "requirements-dev.txt",
 }
 
 # Только в корне скилла исключаем
-ROOT_EXCLUDE_DIRS = {"evals", "assets"}  # evals — только разработчикам, assets — рабочее
+# evals и tests — только разработчикам, assets — рабочая папка кампании
+ROOT_EXCLUDE_DIRS = {"evals", "assets", "tests"}
 
 
 def should_exclude(rel_path: Path) -> bool:
