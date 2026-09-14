@@ -20,6 +20,15 @@ import subprocess
 import sys
 from pathlib import Path
 
+# UTF-8 на консоль: в Windows она по умолчанию cp1251/cp866, и вывод ниже падает
+# UnicodeEncodeError. Здесь повторяем логику scripts/_console.py, а не импортируем
+# её: install.py должен работать до того, как скилл вообще распакован и настроен.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8")
+    except (AttributeError, ValueError):
+        pass
+
 
 def fail(msg: str, exit_code: int = 1):
     print(f"\n❌ ERROR: {msg}", file=sys.stderr)

@@ -27,6 +27,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+try:
+    from scripts._console import setup_console
+except ImportError:  # запуск напрямую, не как модуль пакета
+    from _console import setup_console
+
 
 def load_json(path: Path, default=None):
     if not path.exists():
@@ -483,6 +488,7 @@ def write_docx(md_text: str, output_path: Path) -> bool:
 
 
 def main():
+    setup_console()
     parser = argparse.ArgumentParser(description="M5: генератор LAUNCH_GUIDE для ручного залива в VK")
     parser.add_argument("--workspace", required=True)
     parser.add_argument("--docx", action="store_true", help="Также сохранить как .docx")

@@ -15,6 +15,11 @@ import sys
 import re
 from pathlib import Path
 
+try:
+    from scripts._console import setup_console
+except ImportError:  # запуск напрямую, не как модуль пакета
+    from _console import setup_console
+
 # Лимиты VK Реклама (на 2026 май)
 LIMITS = {
     "universal": {"title": 40, "description": 16384, "description_preview": 220,
@@ -209,6 +214,7 @@ def to_csv(creatives, audiences, output_dir):
 
 
 def main():
+    setup_console()
     ap = argparse.ArgumentParser(description="Генерирует xlsx/CSV с креативами и аудиториями")
     ap.add_argument("--workspace", required=True)
     args = ap.parse_args()

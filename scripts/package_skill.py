@@ -12,10 +12,14 @@ package_skill.py — упаковывает папку vk-ads-manager в .skill 
     └── references/
 
 Исключаются:
-    - __pycache__/, *.pyc, node_modules/
+    - __pycache__/, .pytest_cache/, *.pyc, node_modules/
     - .DS_Store, .git*
-    - evals/ (тестовые промпты — только для разработчиков скилла)
+    - evals/, tests/, pytest.ini, requirements-dev.txt (харнес разработчика)
     - assets/, vk-campaign-*/ (это рабочие папки кампаний, не скилл)
+    - package.sh, package.bat, CHANGELOG.md (инструменты сборки и журнал репозитория)
+
+Перед упаковкой проверяются frontmatter SKILL.md и совпадение имён артефактов
+воронки (NN_*.md) с тем, что читают генераторы документов.
 
 Использование:
     # Стандартное (создаст vk-ads-manager.skill рядом с папкой скилла)
@@ -38,10 +42,16 @@ import sys
 import zipfile
 from pathlib import Path
 
+try:
+    from scripts._console import setup_console
+except ImportError:  # запуск напрямую, не как модуль пакета
+    from _console import setup_console
+
 
 # Что исключаем при упаковке
 EXCLUDE_DIRS = {
     "__pycache__",
+    ".pytest_cache",
     "node_modules",
     ".git",
     ".venv",
@@ -49,10 +59,18 @@ EXCLUDE_DIRS = {
     "dist",
 }
 EXCLUDE_GLOBS = {"*.pyc", "*.pyo", "*.swp", "*.bak", "*.tmp"}
-EXCLUDE_FILES = {".DS_Store", ".gitignore", "Thumbs.db"}
+# Инструменты сборки и репозиторные файлы: нужны разработчику скилла, внутри
+# пакета бесполезны. LICENSE остаётся — Apache-2.0 требует распространять текст
+# лицензии вместе с работой.
+EXCLUDE_FILES = {
+    ".DS_Store", ".gitignore", "Thumbs.db",
+    "package.sh", "package.bat", "CHANGELOG.md",
+    "pytest.ini", "requirements-dev.txt",
+}
 
 # Только в корне скилла исключаем
-ROOT_EXCLUDE_DIRS = {"evals", "assets"}  # evals — только разработчикам, assets — рабочее
+# evals и tests — только разработчикам, assets — рабочая папка кампании
+ROOT_EXCLUDE_DIRS = {"evals", "assets", "tests"}
 
 
 def should_exclude(rel_path: Path) -> bool:
@@ -111,7 +129,42 @@ def validate_skill(skill_path: Path) -> tuple:
     if not (skill_path / "README.md").exists():
         print("⚠ README.md не найден (не критично, но рекомендуется)")
 
+    drift = check_artifact_names(skill_path, content)
+    if drift:
+        return False, (
+            "имена артефактов в SKILL.md разошлись с генераторами: "
+            + ", ".join(sorted(drift))
+            + ". Генераторы их не прочитают — агент запишет шаг в файл, "
+            "который не попадёт ни в медиаплан, ни в отчёт"
+        )
+
     return True, "OK"
+
+
+# Артефакты воронки (NN_*.md), которые генераторы документов НЕ читают by design:
+# они появляются уже после запуска, в lifecycle, и в медиаплан не идут.
+LIFECYCLE_ONLY_ARTIFACTS = {"11_optimization.md"}
+
+ARTIFACT_READERS = ("generate_media_plan.py", "generate_strategy_report.py")
+
+
+def check_artifact_names(skill_path: Path, skill_md: str) -> set:
+    """Имена артефактов воронки из SKILL.md, которых нет ни в одном генераторе.
+
+    Ловит рассинхрон вида «SKILL.md велит писать в 09_landings.md, а генераторы
+    читают 09_landing.md» — раньше такая опечатка тихо теряла целый шаг.
+    """
+    in_skill = set(re.findall(r"`(\d\d[a-z]?_[a-z_]+\.md)`", skill_md))
+
+    in_readers = set()
+    for name in ARTIFACT_READERS:
+        reader = skill_path / "scripts" / name
+        if not reader.exists():
+            continue
+        in_readers |= set(re.findall(r"\"(\d\d[a-z]?_[a-z_]+\.md)\"",
+                                     reader.read_text(encoding="utf-8")))
+
+    return in_skill - in_readers - LIFECYCLE_ONLY_ARTIFACTS
 
 
 def package_skill(skill_path: Path, output_dir: Path = None, version: str = None) -> Path:
@@ -163,6 +216,7 @@ def package_skill(skill_path: Path, output_dir: Path = None, version: str = None
 
 
 def main():
+    setup_console()
     parser = argparse.ArgumentParser(description="Упаковщик скилла в .skill файл")
     parser.add_argument(
         "--skill-path",

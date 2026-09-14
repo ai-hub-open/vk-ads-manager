@@ -20,6 +20,11 @@ import sys
 from pathlib import Path
 from datetime import datetime
 
+try:
+    from scripts._console import setup_console
+except ImportError:  # запуск напрямую, не как модуль пакета
+    from _console import setup_console
+
 STANDALONE_MAP = {
     "04_competitor_analysis.md": "_competitors.md",
     "_semantics.md": "_semantics.md",
@@ -243,6 +248,7 @@ def to_docx(md_text, output):
 
 
 def main():
+    setup_console()
     ap = argparse.ArgumentParser(description="Отчёт-стратегия VK для команды агентства")
     ap.add_argument("--workspace", required=True)
     ap.add_argument("--docx", action="store_true")

@@ -13,6 +13,10 @@ A. Через click.ru (основной): --token <CLICK_RU_TOKEN> + --vk-accou
    Токен: https://click.ru/userinfo.html → «API Token».
    ID аккаунта VK Рекламы в click.ru: GET /accounts в https://api.click.ru/V0/docs/.
 B. Готовый access_token VK Ads: --vk-ads-token <eyJ0...>
+C. Персональная ссылка подключения: --connection-url https://…/o/<connection-id>/<token>
+   Креды зашиты в адрес, заголовки не нужны. Так подключаются среды, которые не
+   умеют передавать свои заголовки. KeepImage этим путём не подключается —
+   токена click.ru в ссылке нет.
 
 Цели (--target, можно несколько):
 - cursor          ~/.cursor/mcp.json (глобально для Cursor)
@@ -35,9 +39,15 @@ import argparse
 import json
 import os
 import platform
+import re
 import shutil
 import sys
 from pathlib import Path
+
+try:
+    from scripts._console import setup_console
+except ImportError:  # запуск напрямую, не как модуль пакета
+    from _console import setup_console
 
 try:
     from scripts.credentials import set_api_key
@@ -47,6 +57,13 @@ except ImportError:  # запуск напрямую, не как модуль �
 
 VK_ADS_URL = "https://vkads-mcp.aihub.click.ru/mcp"
 VK_ADS_SERVER = "vk-ads"
+
+# Персональная ссылка подключения: креды зашиты в путь, заголовки не нужны.
+# Так подключаются среды, которые не умеют передавать свои заголовки (коннекторы
+# claude.ai, Claude Desktop). Суффикс /mcp сервер принимает, но не требует.
+CONNECTION_URL_RE = re.compile(
+    r"^(?P<base>https://[\w.-]+)/o/(?P<conn>[\w-]+)/(?P<token>[\w-]+)/?(?:mcp/?)?$"
+)
 
 # KeepImage — временное хранилище картинок (тот же токен click.ru). Сервер принимает
 # токен и в заголовке `X-Auth-Token`, и в пути `/c/<token>/mcp`; используем заголовок,
@@ -113,7 +130,8 @@ def build_entry(target: str, url: str, headers: dict) -> dict:
         for key, value in headers.items():
             args += ["--header", f"{key}: {value}"]
         return {"command": "npx", "args": args}
-    entry = {"url": url, "headers": headers}
+    # Персональная ссылка идёт без заголовков — пустой объект в конфиг не пишем.
+    entry = {"url": url, "headers": headers} if headers else {"url": url}
     if target == "claude-code":
         entry = {"type": "http", **entry}
     return entry
@@ -143,8 +161,16 @@ def mask(value: str) -> str:
     return f"{value[:4]}...{value[-2:]}" if len(value) > 6 else "***"
 
 
+def mask_url(url: str) -> str:
+    """Прячет токен в персональной ссылке /o/<connection-id>/<token>."""
+    m = CONNECTION_URL_RE.match(url)
+    return f"{m.group('base')}/o/{m.group('conn')}/{mask(m.group('token'))}" if m else url
+
+
 def mask_entry(entry: dict) -> dict:
     entry = json.loads(json.dumps(entry))
+    if entry.get("url"):
+        entry["url"] = mask_url(entry["url"])
     headers = entry.get("headers")
     if headers:
         for key in headers:
@@ -154,7 +180,7 @@ def mask_entry(entry: dict) -> dict:
         entry["args"] = [
             arg.split(": ", 1)[0] + ": " + mask(arg.split(": ", 1)[1])
             if ": " in arg and "token" in arg.split(": ", 1)[0].lower()
-            else arg
+            else mask_url(arg)
             for arg in entry["args"]
         ]
     return entry
@@ -192,6 +218,7 @@ def apply_entries(config_path: Path, entries: dict, *, remove: bool, dry_run: bo
 # ---------- main ----------
 
 def main(argv: list[str] | None = None) -> int:
+    setup_console()
     parser = argparse.ArgumentParser(
         description="Подключить хостовый MCP «VK Реклама» (vkads-mcp.aihub.click.ru) к Cursor, Claude Code, Claude Desktop",
     )
@@ -199,6 +226,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--vk-account-id", help="ID аккаунта VK Рекламы в click.ru (или env CLICK_RU_ACCOUNT_ID)")
     parser.add_argument("--click-ru-user-id", help="ID пользователя click.ru — только для мастер-аккаунта")
     parser.add_argument("--vk-ads-token", help="Готовый access_token VK Ads вместо click.ru (или env VK_ADS_ACCESS_TOKEN)")
+    parser.add_argument(
+        "--connection-url",
+        help="Персональная ссылка подключения https://…/o/<connection-id>/<token> — "
+             "креды уже в адресе, заголовки не нужны (или env VK_ADS_CONNECTION_URL)",
+    )
     parser.add_argument(
         "--target", action="append",
         choices=["cursor", "cursor-project", "claude-code", "claude-desktop", "all"],
@@ -217,20 +249,37 @@ def main(argv: list[str] | None = None) -> int:
         targets = ["cursor", "claude-code", "claude-desktop"]
 
     headers: dict = {}
+    vk_ads_url = VK_ADS_URL
+    connection_url = args.connection_url or os.environ.get("VK_ADS_CONNECTION_URL")
     if not args.remove:
         vk_ads_token = args.vk_ads_token or os.environ.get("VK_ADS_ACCESS_TOKEN")
         token = args.token or os.environ.get("CLICK_RU_TOKEN")
         account_id = args.vk_account_id or os.environ.get("CLICK_RU_ACCOUNT_ID")
-        if not vk_ads_token and not (token and account_id):
+        if connection_url:
+            if not CONNECTION_URL_RE.match(connection_url):
+                print(
+                    "Ссылка не похожа на персональную: жду "
+                    "https://vkads-mcp.aihub.click.ru/o/<connection-id>/<token>",
+                    file=sys.stderr,
+                )
+                return 1
+            # Креды уже в адресе — заголовки не нужны и токена click.ru у нас нет.
+            vk_ads_url = connection_url
+            token = None
+            vk_ads_token = None
+        elif not vk_ads_token and not (token and account_id):
             print(
                 "Нужны креды. Варианты:\n"
                 "  A. click.ru: --token <CLICK_RU_TOKEN> --vk-account-id <ID>\n"
                 "     (env CLICK_RU_TOKEN + CLICK_RU_ACCOUNT_ID)\n"
-                "  B. готовый токен VK Ads: --vk-ads-token <eyJ0...> (env VK_ADS_ACCESS_TOKEN)",
+                "  B. готовый токен VK Ads: --vk-ads-token <eyJ0...> (env VK_ADS_ACCESS_TOKEN)\n"
+                "  C. персональная ссылка: --connection-url https://…/o/<connection-id>/<token>\n"
+                "     (env VK_ADS_CONNECTION_URL)",
                 file=sys.stderr,
             )
             return 1
-        headers = vk_headers(token, account_id, args.click_ru_user_id, vk_ads_token)
+        else:
+            headers = vk_headers(token, account_id, args.click_ru_user_id, vk_ads_token)
 
     # KeepImage подключаем по пути click.ru (тот же токен). С готовым --vk-ads-token
     # токена click.ru нет — KeepImage не трогаем. Флаг --no-keepimage отключает и на снятии.
@@ -239,7 +288,7 @@ def main(argv: list[str] | None = None) -> int:
     kp_headers = keepimage_headers(token, args.click_ru_user_id or os.environ.get("CLICK_RU_USER_ID")) if add_keepimage else {}
 
     print("=== Хостовый MCP «VK Реклама» ===")
-    print(f"Сервер: {VK_ADS_SERVER} → {VK_ADS_URL}")
+    print(f"Сервер: {VK_ADS_SERVER} → {mask_url(vk_ads_url)}")
     if add_keepimage:
         print(f"        {KEEPIMAGE_SERVER} → {KEEPIMAGE_URL} (хранилище картинок, тот же токен click.ru)")
     print(f"Цели:   {', '.join(targets)}")
@@ -259,7 +308,7 @@ def main(argv: list[str] | None = None) -> int:
             if manage_keepimage:
                 entries[KEEPIMAGE_SERVER] = None
         else:
-            entries = {VK_ADS_SERVER: build_entry(target, VK_ADS_URL, headers)}
+            entries = {VK_ADS_SERVER: build_entry(target, vk_ads_url, headers)}
             if add_keepimage:
                 entries[KEEPIMAGE_SERVER] = build_entry(target, KEEPIMAGE_URL, kp_headers)
 

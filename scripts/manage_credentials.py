@@ -29,6 +29,11 @@ import getpass
 import sys
 
 try:
+    from scripts._console import setup_console
+except ImportError:  # запуск напрямую, не как модуль пакета
+    from _console import setup_console
+
+try:
     from scripts.credentials import (
         SERVICE_REGISTRY,
         credentials_file,
@@ -160,6 +165,7 @@ def cmd_info(args):
 
 
 def main():
+    setup_console()
     parser = argparse.ArgumentParser(description="Управление API-ключами для скилла vk-ads-manager")
     sub = parser.add_subparsers(dest="cmd", required=True)
 

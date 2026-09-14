@@ -34,6 +34,11 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
+try:
+    from scripts._console import setup_console
+except ImportError:  # запуск напрямую, не как модуль пакета
+    from _console import setup_console
+
 
 class FFmpegError(Exception):
     pass
@@ -287,6 +292,7 @@ def cmd_overlay(args):
 
 
 def main():
+    setup_console()
     parser = argparse.ArgumentParser(description="Видео-склейка и пост-обработка через FFmpeg")
     sub = parser.add_subparsers(dest="cmd", required=True)
 

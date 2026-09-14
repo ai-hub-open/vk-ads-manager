@@ -26,6 +26,11 @@ import sys
 from pathlib import Path
 
 try:
+    from scripts._console import setup_console
+except ImportError:  # запуск напрямую, не как модуль пакета
+    from _console import setup_console
+
+try:
     from scripts.pdf_builder import build_pdf
 except ImportError:
     sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -71,6 +76,7 @@ def is_ebook_creative(creative: dict) -> bool:
 
 
 def main():
+    setup_console()
     parser = argparse.ArgumentParser(description="M3: генератор PDF lead magnets")
     parser.add_argument("--workspace", required=True)
     parser.add_argument("--only", default=None, help="Только указанный креатив")

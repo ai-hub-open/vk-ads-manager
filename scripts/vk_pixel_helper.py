@@ -16,6 +16,11 @@ import argparse
 import sys
 from pathlib import Path
 
+try:
+    from scripts._console import setup_console
+except ImportError:  # запуск напрямую, не как модуль пакета
+    from _console import setup_console
+
 
 PIXEL_TEMPLATE = """<!-- Top.Mail.Ru / VK Ads pixel -->
 <script type="text/javascript">
@@ -197,6 +202,7 @@ log('Pixel инициализирован, pageView отправлен. Пров
 
 
 def main():
+    setup_console()
     parser = argparse.ArgumentParser(description="Генератор пикселя VK Ads")
     parser.add_argument(
         "--pixel-id",

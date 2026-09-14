@@ -5,9 +5,11 @@ deploy_campaign.py — финальный модуль M4. Читает рабо
 
     media → ad_plan (кампания) → campaigns (группы) → banners (объявления)
 
-Связи проставляются автоматически (группа.ad_plan_id, объявление.campaign_id),
-поэтому orphan-групп не возникает. Все объекты создаются в status=blocked;
-активация НИКОГДА не выполняется здесь (только вручную после чек-листа + ОРД).
+Группа получает ad_plan_id автоматически, поэтому orphan-групп не возникает, а
+объявления уходят вложенным массивом внутри группы: отдельного создания
+объявления в API нет (`POST /banners.json` → 405). Все объекты создаются в
+status=blocked; активация НИКОГДА не выполняется здесь (только вручную после
+чек-листа + ОРД).
 
 Использование:
     python -m scripts.deploy_campaign --workspace <path> --dry-run   # только план
@@ -23,7 +25,7 @@ deploy_campaign.py — финальный модуль M4. Читает рабо
 Что создаёт в VK:
 - 1 ad_plan (Кампания, status=blocked) — цель + общий бюджет
 - N campaigns (Группы, по числу аудиторий, status=blocked) — таргетинги/плейсменты/дневной бюджет
-- M banners (Объявления, status=blocked) — привязаны к группе через campaign_id
+- M banners (Объявления, status=blocked) — создаются вместе со своей группой
 
 Что НЕ делает:
 - Не активирует (status=active никогда не ставится тут)
@@ -33,9 +35,14 @@ deploy_campaign.py — финальный модуль M4. Читает рабо
 import argparse
 import json
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+
+try:
+    from scripts._console import setup_console
+except ImportError:  # запуск напрямую, не как модуль пакета
+    from _console import setup_console
 
 try:
     from scripts.credentials import load_api_key, CredentialNotFound
@@ -47,6 +54,17 @@ except ImportError:
 
 
 # ============ Helpers ============
+
+def _utc_now() -> datetime:
+    """Текущее время UTC с указанием зоны.
+
+    Не `datetime.utcnow()`: он возвращает naive-время и с Python 3.12 объявлен
+    устаревшим (намечен к удалению). Пометка зоны заодно делает `started_at`
+    в `deploy_plan.json` однозначным — раньше по строке нельзя было понять,
+    UTC там или локальное время машины.
+    """
+    return datetime.now(timezone.utc)
+
 
 def rub_to_kopecks(rub: float) -> int:
     return int(round(rub * 100))
@@ -142,6 +160,44 @@ def _vk_format_for(creative: dict) -> str:
 
 # ============ Media upload ============
 
+def _describe(source) -> str:
+    """Короткая подпись источника для лога: имя файла или сама ссылка."""
+    s = str(source)
+    return s if s.startswith("http") else Path(s).name
+
+
+def _image_source(creative: dict, local: Path):
+    """Источник картинки: публичная ссылка от маркетолога или локальный файл.
+
+    Ссылка имеет приоритет: если маркетолог прислал готовый креатив ссылкой,
+    локальный одноимённый файл — это, скорее всего, наша генерация, которую
+    его картинка заменяет.
+    """
+    url = creative.get("image_url")
+    if url:
+        return url
+    return local if local.exists() else None
+
+
+def _video_source(creative: dict, local: Path):
+    url = creative.get("video_url")
+    if url:
+        return url
+    return local if local.exists() else None
+
+
+def _carousel_sources(creative: dict, images_dir: Path, name: str) -> list:
+    """Источники карточек карусели: список ссылок либо файлы `<name>_cardN.png`."""
+    urls = creative.get("image_urls") or ([creative["image_url"]] if creative.get("image_url") else [])
+    if urls:
+        return list(urls)
+    cards = sorted(images_dir.glob(f"{name}_card*.png"))
+    if cards:
+        return cards
+    single = images_dir / f"{name}.png"
+    return [single] if single.exists() else []
+
+
 def upload_media(client: VKAdsClient, creatives: list, workspace: Path, skip_media: bool, plan: dict) -> dict:
     """Возвращает media_id_for_creative: name → {image_id|image_ids|video_id}."""
     images_dir = workspace / "assets" / "images"
@@ -166,57 +222,53 @@ def upload_media(client: VKAdsClient, creatives: list, workspace: Path, skip_med
         fmt = cr.get("format", "") or ""
 
         if "video" in fmt or "video" in (cr.get("image_or_video", "") or ""):
-            video_path = videos_dir / f"{name}.mp4"
-            if video_path.exists():
+            source = _video_source(cr, videos_dir / f"{name}.mp4")
+            if source is not None:
                 try:
-                    resp = client.media.upload_video(video_path)
+                    resp = client.media.upload_video(source)
                     entry["video_id"] = resp.get("id")
-                    print(f"  ✓ video {name} → id={entry['video_id']}")
+                    print(f"  ✓ video {name} ({_describe(source)}) → id={entry['video_id']}")
                 except VKAdsError as e:
                     print(f"  ✗ video {name}: {e}", file=sys.stderr)
                     plan["errors"].append(f"video upload {name}: {e}")
             else:
-                print(f"  ⏭ video {name}: файл {video_path} не найден — skip")
-                plan["errors"].append(f"video file missing: {video_path}")
+                print(f"  ⏭ video {name}: нет ни файла {videos_dir / f'{name}.mp4'}, ни video_url — skip")
+                plan["errors"].append(f"video source missing: {name}")
             media_id_for_creative[name] = entry
             continue
 
         if "carousel" in fmt:
-            card_images = sorted(images_dir.glob(f"{name}_card*.png"))
-            if not card_images:
-                single = images_dir / f"{name}.png"
-                if single.exists():
-                    card_images = [single]
-            if not card_images:
-                print(f"  ⏭ carousel {name}: нет картинок в {images_dir} — skip")
-                plan["errors"].append(f"carousel images missing: {name}")
+            sources = _carousel_sources(cr, images_dir, name)
+            if not sources:
+                print(f"  ⏭ carousel {name}: нет ни картинок в {images_dir}, ни image_urls — skip")
+                plan["errors"].append(f"carousel sources missing: {name}")
                 media_id_for_creative[name] = entry
                 continue
             ids = []
-            for ci in card_images:
+            for src in sources:
                 try:
-                    resp = client.media.upload_image(ci)
+                    resp = client.media.upload_image(src)
                     ids.append(resp.get("id"))
-                    print(f"  ✓ {ci.name} → id={resp.get('id')}")
+                    print(f"  ✓ {_describe(src)} → id={resp.get('id')}")
                 except VKAdsError as e:
-                    print(f"  ✗ {ci.name}: {e}", file=sys.stderr)
-                    plan["errors"].append(f"image upload {ci.name}: {e}")
+                    print(f"  ✗ {_describe(src)}: {e}", file=sys.stderr)
+                    plan["errors"].append(f"image upload {_describe(src)}: {e}")
             entry["image_ids"] = ids
             media_id_for_creative[name] = entry
             continue
 
-        image_path = images_dir / f"{name}.png"
-        if image_path.exists():
+        source = _image_source(cr, images_dir / f"{name}.png")
+        if source is not None:
             try:
-                resp = client.media.upload_image(image_path)
+                resp = client.media.upload_image(source)
                 entry["image_id"] = resp.get("id")
-                print(f"  ✓ image {name} → id={entry['image_id']}")
+                print(f"  ✓ image {name} ({_describe(source)}) → id={entry['image_id']}")
             except VKAdsError as e:
                 print(f"  ✗ image {name}: {e}", file=sys.stderr)
                 plan["errors"].append(f"image upload {name}: {e}")
         else:
-            print(f"  ⏭ image {name}: файл {image_path} не найден — skip")
-            plan["errors"].append(f"image file missing: {image_path}")
+            print(f"  ⏭ image {name}: нет ни файла {images_dir / f'{name}.png'}, ни image_url — skip")
+            plan["errors"].append(f"image source missing: {name}")
         media_id_for_creative[name] = entry
 
     plan["media_uploaded"] = [{"creative": k, **v} for k, v in media_id_for_creative.items()]
@@ -271,7 +323,7 @@ def deploy(workspace: Path, dry_run: bool, skip_media: bool) -> dict:
 
     plan = {
         "workspace": str(workspace),
-        "started_at": datetime.utcnow().isoformat(),
+        "started_at": _utc_now().isoformat(),
         "dry_run": dry_run,
         "media_uploaded": [],
         "ad_plan": None,
@@ -360,7 +412,7 @@ def deploy(workspace: Path, dry_run: bool, skip_media: bool) -> dict:
     elif dry_run:
         print("  [DRY-RUN] — ничего не создано в кабинете")
 
-    plan["finished_at"] = datetime.utcnow().isoformat()
+    plan["finished_at"] = _utc_now().isoformat()
 
     plan_path = workspace / "assets" / "deploy_plan.json"
     plan_path.parent.mkdir(parents=True, exist_ok=True)
@@ -370,7 +422,7 @@ def deploy(workspace: Path, dry_run: bool, skip_media: bool) -> dict:
 
     log_path = workspace / "operations_log.md"
     log_entry = (
-        f"\n## {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC — deploy_campaign\n"
+        f"\n## {_utc_now().strftime('%Y-%m-%d %H:%M:%S')} UTC — deploy_campaign\n"
         f"**Mode:** {'DRY-RUN' if dry_run else 'REAL'}\n"
         f"**Ad plan (кампания) id:** {ad_plan_id if not dry_run else '—'}\n"
         f"**Группы:** {len(plan['groups_created'])}\n"
@@ -386,6 +438,7 @@ def deploy(workspace: Path, dry_run: bool, skip_media: bool) -> dict:
 
 
 def main():
+    setup_console()
     parser = argparse.ArgumentParser(description="M4: end-to-end залив кампании в VK Реклама")
     parser.add_argument("--workspace", required=True, help="Папка vk-campaign-<slug>/")
     parser.add_argument("--dry-run", action="store_true", help="Только план, ничего не создавать")
