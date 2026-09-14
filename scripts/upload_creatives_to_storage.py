@@ -61,6 +61,11 @@ from urllib.parse import quote
 import requests
 
 try:
+    from scripts._console import setup_console
+except ImportError:  # запуск напрямую, не как модуль пакета
+    from _console import setup_console
+
+try:
     from scripts.credentials import CredentialNotFound, load_api_key
 except ImportError:  # запуск напрямую, не как модуль пакета
     sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -176,12 +181,7 @@ def run_check() -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    try:
-        sys.stdout.reconfigure(encoding="utf-8")
-        sys.stderr.reconfigure(encoding="utf-8")
-    except (AttributeError, ValueError):
-        pass
-
+    setup_console()
     parser = argparse.ArgumentParser(description="Заливка локальных креативов в KeepImage → публичные ссылки для vk_ads_content_upload_image")
     parser.add_argument("--workspace", help="Рабочая папка кампании (где лежит assets/images/)")
     parser.add_argument("--files", nargs="+", help="Явный список файлов (перекрывает --workspace как источник)")

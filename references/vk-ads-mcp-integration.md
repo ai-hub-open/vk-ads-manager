@@ -25,6 +25,7 @@ python -m scripts.setup_vk_ads_mcp --token <CLICK_RU_TOKEN> --vk-account-id <ID>
 | **Click.ru (основной)** — OAuth ВК и заявки на API не нужны | `X-Click-Ru-Token: <API-токен click.ru>` + `X-Click-Ru-Account-Id: <ID аккаунта VK Рекламы в click.ru>`; для мастер-аккаунта добавь `X-Click-Ru-User-Id` |
 | Готовый токен VK Рекламы | `X-VK-Ads-Token: <access_token>` |
 | OAuth-приложение (target.vk.ru) | `X-VK-Ads-Client-Id` + `X-VK-Ads-Client-Secret`; агентство от имени клиента — `+ X-VK-Ads-Agency-Client-Name` |
+| **Персональная ссылка подключения** — для сред без своих заголовков | Заголовков нет: креды зашиты в адрес `https://vkads-mcp.aihub.click.ru/o/<connection-id>/<token>` (суффикс `/mcp` допустим, но не обязателен). Так подключаются коннекторы claude.ai и Claude Desktop, которые произвольные заголовки передавать не умеют. Ссылка равнозначна паролю к кабинету — не публикуй её в issue, чатах и конфигах, попадающих в git |
 
 Токен click.ru: профиль https://click.ru/userinfo.html → «API Token» → «Создать». ID аккаунта VK Рекламы — через `GET /accounts` в https://api.click.ru/V0/docs/. Справка: https://help.click.ru/2327, https://help.click.ru/4814.
 
@@ -67,8 +68,17 @@ python -m scripts.setup_vk_ads_mcp --token <CLICK_RU_TOKEN> --vk-account-id <ID>
 `ad_plan` → `campaign` (= `ad_group`) → `banner`.
 
 По умолчанию используй `vk_ads_campaigns_*`. Набор `vk_ads_ad_groups_*` оставлен
-для совместимости; исключение — `vk_ads_ad_groups_get`, он удобен тем, что отдаёт
-`issues` (диагностика, почему группа не крутится).
+для совместимости — по возможностям он ничем не отличается.
+
+🚨 **`issues` (диагностика, почему группа не крутится) приходят только по явному
+запросу.** И `campaigns_get`, и `ad_groups_get` без `fields` отдают три поля
+(`id`, `name`, `package_id`) — ни статуса, ни issues. Запрашивай явно:
+
+`vk_ads_campaigns_get(campaign_id=..., fields="id,name,status,issues")`
+
+Иначе пустой ответ читается как «с группой всё в порядке», хотя она может стоять
+с `ARCHIVED` или `NO_BANNERS_WITH_ACTIVE_STATUS`. Неизвестные имена в `fields`
+сервер молча игнорирует, ошибки не будет.
 
 В сессии агента имена могут выглядеть иначе (в одной среде — `mcp__vk-ads__vk_ads_auth_check` и т.п.) — ориентируйся по короткому имени.
 
@@ -78,7 +88,7 @@ python -m scripts.setup_vk_ads_mcp --token <CLICK_RU_TOKEN> --vk-account-id <ID>
 |---|---|
 | Выбор кабинета (режим click.ru, мультиаккаунт) | `vk_ads_accounts_list` → `account_id` передавать в каждый последующий вызов |
 | Аудит аккаунта (Шаг 0.5) | `vk_ads_auth_check`, `vk_ads_account_info`, `vk_ads_ad_plans_list` |
-| Фактические CPM/CTR для прогноза (Шаг 9.5) | `vk_ads_statistics_summary`, `vk_ads_statistics_day` (entity `campaigns`/`ad_groups`/`banners`, `ids`, `date_from`/`date_to`) |
+| Фактические CPM/CTR для прогноза (Шаг 9.5) | `vk_ads_statistics_summary`, `vk_ads_statistics_day` (entity `campaigns`/`ad_groups`/`banners`, `ids`, `date_from`/`date_to`). Значения лежат в `items[].total.base.cpm` / `…base.ctr`, деньги — строками; см. «Особенности ответов сервера» |
 | Загрузка креативов (Шаг 11) | `vk_ads_content_upload_image` / `vk_ads_content_upload_video`, параметр `source_path_or_url` — **на хосте только публичный http(s)-URL**; локальные картинки выкладывай через мост KeepImage (`scripts/upload_creatives_to_storage.py`), см. ниже |
 | Залив кампании (Шаг 11, путь A) | `vk_ads_ad_plans_create` с nested `campaigns: [...]` → `banners: [...]` — один атомарный вызов. Либо `vk_ads_ad_plans_create` → `vk_ads_campaigns_create(ad_plan_id=..., banners=[...])` по одной группе за вызов. Отдельного создания баннера нет |
 | Пауза/запуск, бюджет (lifecycle) | `vk_ads_campaigns_set_status`, `vk_ads_campaigns_update`, `vk_ads_ad_plans_update` |
@@ -107,9 +117,11 @@ python -m scripts.setup_vk_ads_mcp --token <CLICK_RU_TOKEN> --vk-account-id <ID>
 - ВК ограничивает число активных OAuth-токенов (≤5); при ошибке `token_limit_exceeded` — `vk_ads_token_revoke`.
 - **У `ad_plan` нет `set_status`.** Пауза/запуск «Кампании» целиком — только `vk_ads_ad_plans_update`
   с `{"status": ...}`. У `campaign` метод есть.
-- **`package_id` обязателен при создании группы** и определяет формат, площадки и модель оплаты
-  (`priced_event_type`: 0 = CPM, 1 = CPC, 30 = oCPM). После создания не меняется — другая модель
-  оплаты означает новую группу.
+- **`package_id` обязателен при создании группы** и определяет формат, площадки и модель оплаты.
+  После создания не меняется — другая модель оплаты означает новую группу.
+  Известные значения `priced_event_type`: 0 = CPM, 1 = CPC, 30 = oCPM, 51 = оплата за лид
+  (оба активных пакета `leadads` — 3215 и 4618 — приходят с 51). Список не закрыт: не выводи
+  модель оплаты из одного только числа, сверяйся с именем пакета (`_cpm_` / `_cpc_` / `_ocpm_`).
 - **В выдаче `packages_list` встречаются пакеты со `status: "blocked"`** — фильтруй по `active`.
 
 ## Особенности ответов сервера
@@ -118,15 +130,30 @@ python -m scripts.setup_vk_ads_mcp --token <CLICK_RU_TOKEN> --vk-account-id <ID>
 (`6000000` = 60 000 ₽). `ctr` — десятичная доля, для процентов умножать на 100.
 Не показывай пользователю сырые значения.
 
-**Списки по умолчанию бедные.** `*_list` без параметра `fields` отдаёт только
-`id`, `name`, `package_id`. Ни статуса, ни бюджета, ни `ad_plan_id`.
-Рабочий набор: `fields="id,name,status,objective,budget_limit,budget_limit_day,ad_plan_id,created"`.
+**Списки по умолчанию бедные.** `campaigns_list` / `ad_groups_list` / `banners_list`
+без параметра `fields` отдают только `id`, `name`, `package_id`. Ни статуса, ни бюджета,
+ни `ad_plan_id`. Рабочий набор:
+`fields="id,name,status,objective,budget_limit,budget_limit_day,ad_plan_id,created"`.
+(`ad_plans_list` — исключение, он и без `fields` добавляет `event_limit`,
+`uniq_shows_limit`, `uniq_shows_period`, `yclients_salon_id`, но статуса там тоже нет.)
 
 **Конверт ответа не унифицирован.** `ad_plans_list` → `{count, items, offset}`;
 `remarketing_segments_list` → `{limit, offset, items, count}`;
 `remarketing_pixels_list` → `{items}` без `count`;
-`regions_search` → `{count, items, total_regions}`.
+`regions_search` → `{count, items, total_regions}`;
+`packages_list` → `{count, total_packages, available_objectives, items}`.
 Не строй пагинацию на обязательном наличии `count`.
+
+**У статистики конверт свой, с вложенностью по группам метрик:**
+
+```json
+{"items": [{"id": 150765736, "total": {"base": {"shows": 0, "clicks": 0, "cpm": "0", "ctr": 0}}}],
+ "total": {"base": {…}}}
+```
+
+Метрика лежит по пути `items[].total.<группа>.<имя>` — для прогноза Шага 9.5 это
+`items[].total.base.cpm` и `…base.ctr`. Деньги (`spent`, `cpm`, `cpc`, `cpa`) приходят
+**строками**, приводи к числу сам; `ctr` и `cr` — числа и уже доли, а не проценты.
 
 **Формат ошибки не унифицирован.** У словарей `detail` — строка
 (`{"status":404,"detail":"Not found"}`), у сущностей — объект

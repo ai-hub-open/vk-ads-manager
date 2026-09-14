@@ -2,6 +2,20 @@
 
 Версии — [semver](https://semver.org/lang/ru/): до 1.0 состав шагов и материалов может меняться.
 
+## 0.6.6 — 2026-09-14
+
+Скрипты перестали падать на консоли Windows; сверка справочника MCP с живым сервером; установщик принимает персональную ссылку подключения.
+
+- **🔴 Windows-кодировка.** 13 из 14 CLI-скриптов падали `UnicodeEncodeError: 'charmap' codec` на любом выводе кириллицей — консоль Windows по умолчанию `cp1251`/`cp866`/`cp1252`. Не запускался даже `--help`. Новый модуль `scripts/_console.py` переключает `stdout`/`stderr` на UTF-8; `setup_console()` вызывается первой строкой `main()` во всех 16 точках входа, в `install.py` та же логика продублирована (он работает до распаковки скилла). Дубль кода в `upload_creatives_to_storage.py` заменён на общий вызов.
+- **🟠 Имена артефактов в `SKILL.md` разошлись с генераторами:** `04_competitors_deep.md` → `04_competitor_analysis.md`, `09_landings.md` → `09_landing.md`, `vk_ads_pixel_check.html` → `vk_pixel_check.html`. Агент писал пометку о пропуске шага в файл, который `generate_media_plan.py` и `generate_strategy_report.py` не читают, — шаг молча исчезал из медиаплана и отчёта. `package_skill.py` теперь валит упаковку, если имя `NN_*.md` из `SKILL.md` не читает ни один генератор (исключение — lifecycle-артефакты, см. `LIFECYCLE_ONLY_ARTIFACTS`).
+- **Персональная ссылка подключения.** Сервер принимает креды не только заголовками, но и в адресе — `https://vkads-mcp.aihub.click.ru/o/<connection-id>/<token>`. Для коннекторов claude.ai и Claude Desktop это единственный рабочий способ: свои заголовки они передавать не умеют. Новый флаг `--connection-url` у `setup_vk_ads_mcp.py` (env `VK_ADS_CONNECTION_URL`) пишет такую запись без блока `headers`; токен в выводе маскируется. KeepImage этим путём не подключается — токена click.ru в ссылке нет. Описано в `docs/hosted-mcp-setup.md` и `references/vk-ads-mcp-integration.md`.
+- **Сверка `references/vk-ads-mcp-integration.md` с живым сервером (14.09.2026, версия сервера 0.11.0).** Подтверждены состав 45 инструментов (имя в имя), тождество `campaigns` ≡ `ad_groups`, копейки в бюджетах, бедные `*_list`, 404 у `dictionary_get(interests)`, отсутствие `ad_plans_set_status` и создания баннера. Исправлены три факта:
+  - `priced_event_type` — добавлено значение 51 (оплата за лид; оба активных пакета `leadads`), снято утверждение, что моделей оплаты ровно три;
+  - убрано неверное «`ad_groups_get` удобен тем, что отдаёт `issues`»: `issues` приходят и в `campaigns_get`, и в `ad_groups_get`, но **только** при явном `fields="…,issues"` — иначе оба отдают три поля, и пустой ответ читается как «всё в порядке»;
+  - описан конверт статистики (`items[].total.base.cpm`, деньги строками, `ctr`/`cr` — доли) — Шаг 9.5 на него завязан, а раздел про конверты его не упоминал. Там же: `ad_plans_list` не так беден, как остальные списки; добавлен конверт `packages_list`.
+- **Чистка репозитория.** Удалён `references/CHANGELOG_help_sync.md` — журнал сверки со справкой ВК: материал разработчика, лежавший в папке, которую агент читает как справочную, и не упомянутый ни в `SKILL.md`, ни в README. Из `docs/hosted-mcp-setup.md` убрано всё про `yandex-direct` и `yandex-wordstat` (другой скилл): примеры конфигов для Claude Code и Claude Desktop показывали только Директ, то есть пользователь vk-ads-manager, копируя пример, получал чужой конфиг. `package_skill.py` больше не кладёт в `.skill` инструменты сборки (`package.sh`, `package.bat`, `CHANGELOG.md`); `LICENSE` остаётся — этого требует Apache-2.0.
+- Отчёт о проверке — `docs/audit-2026-09-14.md`.
+
 ## 0.6.5 — 2026-09-03
 
 Установщик MCP подключает и коннектор KeepImage; уточнены факты авторизации KeepImage (сверено с сервером).

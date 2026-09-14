@@ -39,6 +39,11 @@ import sys
 import time
 from pathlib import Path
 
+try:
+    from scripts._console import setup_console
+except ImportError:  # запуск напрямую, не как модуль пакета
+    from _console import setup_console
+
 # Импортируем шаблоны и credentials
 try:
     from scripts.prompt_templates import (
@@ -220,6 +225,7 @@ def postprocess(image_path: Path, target_size: tuple):
 
 
 def main():
+    setup_console()
     parser = argparse.ArgumentParser(description="Генератор картинок для VK Реклама креативов")
     parser.add_argument("--workspace", required=True, help="Папка vk-campaign-<slug>/")
     parser.add_argument(

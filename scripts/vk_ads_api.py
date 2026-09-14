@@ -52,6 +52,11 @@ from pathlib import Path
 from typing import Optional, Any
 
 try:
+    from scripts._console import setup_console
+except ImportError:  # запуск напрямую, не как модуль пакета
+    from _console import setup_console
+
+try:
     import requests
 except ImportError:
     print("ERROR: модуль requests не установлен. pip install requests", file=sys.stderr)
@@ -609,6 +614,7 @@ def cmd_campaign_update(args):
 
 
 def main():
+    setup_console()
     parser = argparse.ArgumentParser(description="VK Ads API client")
     parser.add_argument("--dry-run", action="store_true", help="Не выполнять write-операции")
     sub = parser.add_subparsers(dest="cmd", required=True)

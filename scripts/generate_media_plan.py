@@ -14,6 +14,11 @@ import sys
 from pathlib import Path
 from datetime import datetime
 
+try:
+    from scripts._console import setup_console
+except ImportError:  # запуск напрямую, не как модуль пакета
+    from _console import setup_console
+
 
 ARTIFACTS_ORDER = [
     ("01_brief.md", "1. Продуктовый бриф"),
@@ -120,6 +125,7 @@ def render_docx(workspace: Path, output: Path) -> bool:
 
 
 def main():
+    setup_console()
     parser = argparse.ArgumentParser(description="Генерирует медиаплан в docx или md")
     parser.add_argument("--workspace", required=True, help="Папка vk-campaign-<slug>/")
     parser.add_argument("--format", choices=["docx", "md", "auto"], default="auto")

@@ -22,6 +22,11 @@ import json
 import sys
 from pathlib import Path
 
+try:
+    from scripts._console import setup_console
+except ImportError:  # запуск напрямую, не как модуль пакета
+    from _console import setup_console
+
 VERIFIED = {"api", "client"}  # источники, которым можно доверять для лидов/CPL
 
 TEMPLATE = {
@@ -178,6 +183,7 @@ def render(cfg):
 
 
 def main():
+    setup_console()
     ap = argparse.ArgumentParser(description="Прогноз VK по сценариям с тегами источников")
     ap.add_argument("--workspace", required=True)
     ap.add_argument("--init", action="store_true", help="создать шаблон forecast_inputs.json")

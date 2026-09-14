@@ -27,6 +27,11 @@ import sys
 import time
 from pathlib import Path
 
+try:
+    from scripts._console import setup_console
+except ImportError:  # запуск напрямую, не как модуль пакета
+    from _console import setup_console
+
 # Локальные импорты
 try:
     from scripts.credentials import load_api_key, CredentialNotFound
@@ -104,6 +109,7 @@ def save_prompt(prompt: str, path: Path, creative: dict, vtype: str, duration: i
 
 
 def main():
+    setup_console()
     parser = argparse.ArgumentParser(description="Генератор видео для VK Реклама креативов")
     parser.add_argument("--workspace", required=True)
     parser.add_argument(

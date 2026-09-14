@@ -38,6 +38,11 @@ from pathlib import Path
 from typing import Optional
 
 try:
+    from scripts._console import setup_console
+except ImportError:  # запуск напрямую, не как модуль пакета
+    from _console import setup_console
+
+try:
     from scripts.credentials import load_api_key, CredentialNotFound
     from scripts.vk_ads_api import VKAdsClient, VKAdsError
 except ImportError:
@@ -386,6 +391,7 @@ def deploy(workspace: Path, dry_run: bool, skip_media: bool) -> dict:
 
 
 def main():
+    setup_console()
     parser = argparse.ArgumentParser(description="M4: end-to-end залив кампании в VK Реклама")
     parser.add_argument("--workspace", required=True, help="Папка vk-campaign-<slug>/")
     parser.add_argument("--dry-run", action="store_true", help="Только план, ничего не создавать")
