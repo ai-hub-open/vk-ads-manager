@@ -46,10 +46,12 @@ ENV / секреты:
 import argparse
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
-from typing import Optional, Any
+from typing import Optional, Any, Union
+from urllib.parse import urlparse
 
 try:
     from scripts._console import setup_console
@@ -265,29 +267,41 @@ class VKAdsClient:
         ad_plan_id = ap_resp.get("id") or ("DRY_AD_PLAN" if self.dry_run else 0)
         result["ad_plan"] = {"id": ad_plan_id, "payload": plan}
 
-        # 2) Группы (campaigns) с ad_plan_id
+        # 2) Группы (campaigns) с ad_plan_id — объявления уходят ВЛОЖЕННЫМ массивом
+        #    в том же вызове: отдельного POST /banners.json в API нет (405), а группа,
+        #    созданная без баннеров, навсегда останется пустой.
         for gi, g in enumerate(groups):
             g_payload = dict(g.get("payload", {}))
             g_payload["ad_plan_id"] = ad_plan_id
             g_payload["status"] = "blocked"
+
+            banner_payloads = [{**dict(b), "status": "blocked"} for b in g.get("banners", [])]
+            if banner_payloads:
+                g_payload["banners"] = banner_payloads
+
             try:
                 g_resp = self.campaigns.create(g_payload)
             except VKAdsError as e:
                 result["errors"].append(f"группа '{g_payload.get('name')}': {e}")
                 continue
+
             group_id = g_resp.get("id") or (f"DRY_GROUP_{gi}" if self.dry_run else 0)
             group_rec = {"id": group_id, "payload": g_payload, "banners": []}
 
-            # 3) Объявления (banners) с campaign_id = id группы
-            for b in g.get("banners", []):
-                b_payload = dict(b)
-                b_payload["campaign_id"] = group_id
-                b_payload["status"] = "blocked"
-                try:
-                    b_resp = self.banners.create(b_payload)
-                    group_rec["banners"].append({"id": b_resp.get("id", 0), "payload": b_payload})
-                except VKAdsError as e:
-                    result["errors"].append(f"объявление в группе {group_id}: {e}")
+            # id объявлений приходят в ответе на создание группы, по порядку payload.
+            created = g_resp.get("banners") or []
+            for bi, b_payload in enumerate(banner_payloads):
+                b_resp = created[bi] if bi < len(created) else {}
+                group_rec["banners"].append({
+                    "id": b_resp.get("id", f"DRY_BANNER_{gi}_{bi}" if self.dry_run else 0),
+                    "payload": b_payload,
+                })
+
+            if banner_payloads and not created and not self.dry_run:
+                result["errors"].append(
+                    f"группа {group_id}: в ответе нет созданных объявлений — "
+                    f"проверь группу через ad_groups_get(fields='...,banners,issues')"
+                )
             result["groups"].append(group_rec)
 
         return result
@@ -412,22 +426,25 @@ class BannersAPI:
         return self.client.request("GET", f"/banners/{banner_id}.json")
 
     def create(self, payload: dict) -> dict:
-        """Создаёт ОБЪЯВЛЕНИЕ. Привязывается к campaign_id (к ГРУППЕ), НЕ к ad_plan_id.
+        """Отдельного создания объявления в API НЕТ. Метод оставлен как заглушка.
 
-        ⚠️ НЕ СВЕРЕНО. vk-ads-mcp не предоставляет отдельного создания баннера и утверждает,
-        что POST /banners в API нет. Этот метод конфликтует с тем утверждением.
-        Проверяется одним живым write-вызовом: создать баннер в существующей группе и сразу удалить.
-        До проверки предпочитай вложенный массив `banners` внутри payload группы.
+        `POST /api/v2/banners.json` отвечает `405 unsupported_http_method`
+        с `supported_methods: ["GET"]` — сверено с реализацией хостового сервера
+        vk-ads-mcp, которая проверялась против ads.vk.com. Раньше этот метод
+        уходил в сеть и падал 405 уже на заливе; теперь объясняет, что делать.
+
+        Объявления создаются **вложенным массивом** внутри группы:
+        `campaigns.create({..., "banners": [...]})` — или деревом целиком через
+        `client.create_campaign_tree(...)`. «Долить» объявления в существующую
+        группу нельзя: группа без баннеров остаётся мёртвой
+        (`NO_BANNERS_WITH_ACTIVE_STATUS`), её пересоздают.
         """
-        if payload.get("ad_plan_id") and not payload.get("campaign_id"):
-            raise VKAdsError(
-                "banner привязывается к campaign_id (группе), а не к ad_plan_id. "
-                "Передан ad_plan_id вместо campaign_id — исправь связь."
-            )
-        if not payload.get("campaign_id"):
-            raise VKAdsError("banner требует campaign_id (id группы). Используй client.create_campaign_tree(...).")
-        payload.setdefault("status", "blocked")
-        return self.client.request("POST", "/banners.json", json=payload)
+        raise VKAdsError(
+            "Отдельного создания объявления в VK Ads API нет: POST /banners.json "
+            "отвечает 405 unsupported_http_method. Передавай объявления массивом "
+            "`banners` внутри payload группы — campaigns.create({..., 'banners': [...]}) "
+            "или client.create_campaign_tree(...)."
+        )
 
     def update(self, banner_id: int, payload: dict) -> dict:
         return self.client.request("PUT", f"/banners/{banner_id}.json", json=payload)
@@ -458,32 +475,84 @@ class AudiencesAPI:
 
 
 class MediaAPI:
-    """Загрузка изображений и видео для использования в баннерах."""
+    """Загрузка изображений и видео для использования в баннерах.
+
+    Источником может быть локальный файл или публичный http(s)-URL. VK сам по
+    ссылке не ходит — эндпоинт принимает только multipart, — поэтому ссылку
+    скачиваем мы и отправляем байты. Это тот же мост, что у пути A через
+    KeepImage: `assets/images/*` → публичная ссылка → загрузка; здесь роль
+    «скачивателя» берёт на себя клиент, и для локальных файлов KeepImage не
+    нужен вовсе.
+    """
+
+    # Эндпоинты контента (сверено с реализацией хостового сервера vk-ads-mcp).
+    # ⚠️ Общего /content/upload.json в API нет — тип задаётся путём.
+    IMAGE_ENDPOINT = "/content/static.json"
+    VIDEO_ENDPOINT = "/content/video.json"
+
+    IMAGE_MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                  ".gif": "image/gif", ".webp": "image/webp"}
+    VIDEO_MIME = {".mp4": "video/mp4", ".mov": "video/quicktime",
+                  ".avi": "video/x-msvideo", ".mpeg": "video/mpeg", ".mpg": "video/mpeg"}
 
     def __init__(self, client: VKAdsClient):
         self.client = client
 
-    def upload_image(self, image_path: Path) -> dict:
-        image_path = Path(image_path)
-        if not image_path.exists():
-            raise VKAdsError(f"Не найден файл изображения: {image_path}")
-        mime = "image/png" if image_path.suffix.lower() == ".png" else "image/jpeg"
-        with image_path.open("rb") as f:
-            return self.client.upload(
-                path="/content/upload.json",
-                files={"file": (image_path.name, f, mime)},
+    def upload_image(self, source: Union[str, Path]) -> dict:
+        """Загружает картинку из локального файла или по публичной ссылке."""
+        name, blob, mime = self._read_source(source, self.IMAGE_MIME, "image/png")
+        return self.client.upload(self.IMAGE_ENDPOINT, files={"file": (name, blob, mime)})
+
+    def upload_video(self, source: Union[str, Path]) -> dict:
+        """Загружает видео (до 90 МБ, mp4/mpeg/avi/mov) из файла или по ссылке."""
+        name, blob, mime = self._read_source(source, self.VIDEO_MIME, "video/mp4")
+        return self.client.upload(self.VIDEO_ENDPOINT, files={"file": (name, blob, mime)})
+
+    # ---------- источник: файл или ссылка ----------
+
+    @staticmethod
+    def is_url(source: Union[str, Path]) -> bool:
+        """http(s)-ссылка? Одна буква со схемой — это диск Windows (C:\\...), не URL."""
+        return bool(re.match(r"^https?://", str(source), re.IGNORECASE))
+
+    def _read_source(self, source, mime_map: dict, default_mime: str):
+        """Возвращает (имя файла, байты или файловый объект, mime-тип)."""
+        if self.is_url(source):
+            return self._fetch_url(str(source), mime_map, default_mime)
+
+        path = Path(source)
+        if not path.exists():
+            raise VKAdsError(f"Не найден файл креатива: {path}")
+        mime = mime_map.get(path.suffix.lower(), default_mime)
+        return path.name, path.read_bytes(), mime
+
+    def _fetch_url(self, url: str, mime_map: dict, default_mime: str):
+        """Скачивает креатив по публичной ссылке.
+
+        Ошибку ссылки отделяем от ошибки VK: «страница вместо картинки» (типовой
+        случай — шаренная ссылка Google Drive) должна читаться как проблема
+        ссылки, а не как отказ рекламной системы по контенту.
+        """
+        if self.client.dry_run:
+            return Path(urlparse(url).path).name or "creative", b"", default_mime
+        try:
+            resp = requests.get(url, timeout=60)
+        except requests.RequestException as e:
+            raise VKAdsError(f"Не смог скачать креатив по ссылке {url}: {e}")
+        if not resp.ok:
+            raise VKAdsError(f"Ссылка {url} вернула HTTP {resp.status_code}")
+
+        content_type = (resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        if content_type.startswith("text/"):
+            raise VKAdsError(
+                f"По ссылке {url} лежит не файл, а страница ({content_type}). "
+                "Типовой случай — шаренная ссылка Google Drive или Яндекс.Диска: "
+                "нужна прямая ссылка на файл."
             )
 
-    def upload_video(self, video_path: Path) -> dict:
-        """Загружает видео (перформанс-объявление: до 90 МБ, mp4/mpeg/avi/mov)."""
-        video_path = Path(video_path)
-        if not video_path.exists():
-            raise VKAdsError(f"Не найден видео-файл: {video_path}")
-        with video_path.open("rb") as f:
-            return self.client.upload(
-                path="/content/upload.json",
-                files={"file": (video_path.name, f, "video/mp4")},
-            )
+        name = Path(urlparse(url).path).name or "creative"
+        mime = content_type or mime_map.get(Path(name).suffix.lower(), default_mime)
+        return name, resp.content, mime
 
     def wait_for_video(self, video_id: int, max_attempts: int = 60, poll_interval: int = 5) -> dict:
         for attempt in range(max_attempts):

@@ -147,6 +147,44 @@ def _vk_format_for(creative: dict) -> str:
 
 # ============ Media upload ============
 
+def _describe(source) -> str:
+    """Короткая подпись источника для лога: имя файла или сама ссылка."""
+    s = str(source)
+    return s if s.startswith("http") else Path(s).name
+
+
+def _image_source(creative: dict, local: Path):
+    """Источник картинки: публичная ссылка от маркетолога или локальный файл.
+
+    Ссылка имеет приоритет: если маркетолог прислал готовый креатив ссылкой,
+    локальный одноимённый файл — это, скорее всего, наша генерация, которую
+    его картинка заменяет.
+    """
+    url = creative.get("image_url")
+    if url:
+        return url
+    return local if local.exists() else None
+
+
+def _video_source(creative: dict, local: Path):
+    url = creative.get("video_url")
+    if url:
+        return url
+    return local if local.exists() else None
+
+
+def _carousel_sources(creative: dict, images_dir: Path, name: str) -> list:
+    """Источники карточек карусели: список ссылок либо файлы `<name>_cardN.png`."""
+    urls = creative.get("image_urls") or ([creative["image_url"]] if creative.get("image_url") else [])
+    if urls:
+        return list(urls)
+    cards = sorted(images_dir.glob(f"{name}_card*.png"))
+    if cards:
+        return cards
+    single = images_dir / f"{name}.png"
+    return [single] if single.exists() else []
+
+
 def upload_media(client: VKAdsClient, creatives: list, workspace: Path, skip_media: bool, plan: dict) -> dict:
     """Возвращает media_id_for_creative: name → {image_id|image_ids|video_id}."""
     images_dir = workspace / "assets" / "images"
@@ -171,57 +209,53 @@ def upload_media(client: VKAdsClient, creatives: list, workspace: Path, skip_med
         fmt = cr.get("format", "") or ""
 
         if "video" in fmt or "video" in (cr.get("image_or_video", "") or ""):
-            video_path = videos_dir / f"{name}.mp4"
-            if video_path.exists():
+            source = _video_source(cr, videos_dir / f"{name}.mp4")
+            if source is not None:
                 try:
-                    resp = client.media.upload_video(video_path)
+                    resp = client.media.upload_video(source)
                     entry["video_id"] = resp.get("id")
-                    print(f"  ✓ video {name} → id={entry['video_id']}")
+                    print(f"  ✓ video {name} ({_describe(source)}) → id={entry['video_id']}")
                 except VKAdsError as e:
                     print(f"  ✗ video {name}: {e}", file=sys.stderr)
                     plan["errors"].append(f"video upload {name}: {e}")
             else:
-                print(f"  ⏭ video {name}: файл {video_path} не найден — skip")
-                plan["errors"].append(f"video file missing: {video_path}")
+                print(f"  ⏭ video {name}: нет ни файла {videos_dir / f'{name}.mp4'}, ни video_url — skip")
+                plan["errors"].append(f"video source missing: {name}")
             media_id_for_creative[name] = entry
             continue
 
         if "carousel" in fmt:
-            card_images = sorted(images_dir.glob(f"{name}_card*.png"))
-            if not card_images:
-                single = images_dir / f"{name}.png"
-                if single.exists():
-                    card_images = [single]
-            if not card_images:
-                print(f"  ⏭ carousel {name}: нет картинок в {images_dir} — skip")
-                plan["errors"].append(f"carousel images missing: {name}")
+            sources = _carousel_sources(cr, images_dir, name)
+            if not sources:
+                print(f"  ⏭ carousel {name}: нет ни картинок в {images_dir}, ни image_urls — skip")
+                plan["errors"].append(f"carousel sources missing: {name}")
                 media_id_for_creative[name] = entry
                 continue
             ids = []
-            for ci in card_images:
+            for src in sources:
                 try:
-                    resp = client.media.upload_image(ci)
+                    resp = client.media.upload_image(src)
                     ids.append(resp.get("id"))
-                    print(f"  ✓ {ci.name} → id={resp.get('id')}")
+                    print(f"  ✓ {_describe(src)} → id={resp.get('id')}")
                 except VKAdsError as e:
-                    print(f"  ✗ {ci.name}: {e}", file=sys.stderr)
-                    plan["errors"].append(f"image upload {ci.name}: {e}")
+                    print(f"  ✗ {_describe(src)}: {e}", file=sys.stderr)
+                    plan["errors"].append(f"image upload {_describe(src)}: {e}")
             entry["image_ids"] = ids
             media_id_for_creative[name] = entry
             continue
 
-        image_path = images_dir / f"{name}.png"
-        if image_path.exists():
+        source = _image_source(cr, images_dir / f"{name}.png")
+        if source is not None:
             try:
-                resp = client.media.upload_image(image_path)
+                resp = client.media.upload_image(source)
                 entry["image_id"] = resp.get("id")
-                print(f"  ✓ image {name} → id={entry['image_id']}")
+                print(f"  ✓ image {name} ({_describe(source)}) → id={entry['image_id']}")
             except VKAdsError as e:
                 print(f"  ✗ image {name}: {e}", file=sys.stderr)
                 plan["errors"].append(f"image upload {name}: {e}")
         else:
-            print(f"  ⏭ image {name}: файл {image_path} не найден — skip")
-            plan["errors"].append(f"image file missing: {image_path}")
+            print(f"  ⏭ image {name}: нет ни файла {images_dir / f'{name}.png'}, ни image_url — skip")
+            plan["errors"].append(f"image source missing: {name}")
         media_id_for_creative[name] = entry
 
     plan["media_uploaded"] = [{"creative": k, **v} for k, v in media_id_for_creative.items()]

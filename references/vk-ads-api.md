@@ -124,9 +124,14 @@ grant_type=client_credentials&client_id={ID}&client_secret={SECRET}
 
 - `GET /banners.json?campaign_id={id}` — список объявлений в группе
 - `GET /banners/{id}.json`
-- `POST /banners.json` — создание (нужен `campaign_id`)
+- ~~`POST /banners.json`~~ — **такого метода нет**, см. ниже
 
-> ⚠️ **Не сверено.** vk-ads-mcp не предоставляет отдельного создания баннера и утверждает, что `POST /banners` в API нет. Метод `BannersAPI.create` в `scripts/vk_ads_api.py` конфликтует с этим утверждением. До живой проверки предпочитай вложенный массив `banners` внутри payload группы (`create_campaign_tree`).
+> 🚨 **Сверено 15.09.2026.** Отдельного создания объявления в API нет: `POST /api/v2/banners.json`
+> отвечает `405 unsupported_http_method` с `supported_methods: ["GET"]` — так это описано в коде
+> хостового сервера `ai-hub-open/vk-ads-mcp` (`src/tools/banners.ts`), который проверялся против
+> ads.vk.com. Объявления создаются **вложенным массивом `banners` внутри payload группы**:
+> `campaigns.create({..., "banners": [...]})` или `client.create_campaign_tree(...)`.
+> `BannersAPI.create` оставлен заглушкой, которая бросает ошибку с этим объяснением.
 
 - `PUT /banners/{id}.json`
 
@@ -163,7 +168,14 @@ grant_type=client_credentials&client_id={ID}&client_secret={SECRET}
 Метрики: `impressions`, `clicks`, `ctr`, `cpc`, `cost` (в копейках!), `goals` (события пикселя), `cpa`, `video_views`.
 
 ### Файлы (`/content`)
-- `POST /content/upload.json` — загрузка изображения/видео → возвращает `id` для `banners.images`/`videos`.
+- `POST /content/static.json` — загрузка изображения → возвращает `id` для `banners.images`.
+- `POST /content/video.json` — загрузка видео → `id` для `banners.videos`.
+- `POST /content/html5.json` — HTML5-креатив.
+
+⚠️ Общего `/content/upload.json` **не существует** — тип контента задаётся путём.
+Приём только `multipart/form-data`, поле `file`; ссылку VK сам не скачивает, файл
+шлёт клиент. `GET` по этим путям отвечает `405` — списка загруженного контента в
+API нет, сохраняй возвращённые `id`.
 
 ### Утилиты (`/dictionaries`)
 - `GET /dictionaries/regions.json?country=RU`, `.../interest_categories.json`, `.../call_to_actions.json`
@@ -196,14 +208,26 @@ grant_type=client_credentials&client_id={ID}&client_secret={SECRET}
     "placements":["vk_feed","vk_clips"]}
    ```
 
-4. **Объявления (banners)** — 3-5 на группу, с `campaign_id`:
+4. **Объявления (banners)** — 3-5 на группу, **вложенным массивом внутри группы**:
    ```http
-   POST /content/upload.json      (картинка → image_id)
-   POST /banners.json
-   {"campaign_id":67890,"format":"universal","title":"…","description":"…",
-    "url":"…","call_to_action":"learn_more","images":[{"id":"<image_id>"}],
-    "company_info":"ИП …, ИНН …"}
+   POST /content/static.json      (картинка → image_id)
+   POST /campaigns.json
+   {"ad_plan_id":12345,"name":"H1 — LAL 1%","status":"blocked", …,
+    "banners":[
+      {"format":"universal","title":"…","description":"…","url":"…",
+       "call_to_action":"learn_more","images":[{"id":"<image_id>"}],
+       "company_info":"ИП …, ИНН …","status":"blocked"}
+    ]}
    ```
+
+   🚨 **Отдельного `POST /banners.json` в API нет** — он отвечает
+   `405 unsupported_http_method` с `supported_methods: ["GET"]` (сверено с
+   реализацией хостового сервера `vk-ads-mcp`, проверявшейся против ads.vk.com).
+   Ресурс Banner поддерживает `GET`, `POST` по id (правка), `DELETE` и пакетный
+   `POST /banners/remoderate.json`. «Долить» объявления в созданную группу нельзя:
+   группа без баннеров остаётся мёртвой с issue `NO_BANNERS_WITH_ACTIVE_STATUS`.
+   В нашем клиенте `client.banners.create(...)` намеренно бросает ошибку с этим
+   объяснением, а `create_campaign_tree` кладёт баннеры внутрь payload группы.
 
 5. **Активация — ТОЛЬКО по подтверждению пользователя И после ОРД-preflight:**
    ```http

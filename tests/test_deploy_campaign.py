@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 
 from scripts import deploy_campaign as dc
+from scripts.vk_ads_api import MediaAPI
 
 
 # ---------- рубли → копейки ----------
@@ -205,3 +206,67 @@ def test_ad_plan_config_from_state_converts_budget(tmp_path):
     assert cfg["status"] == "blocked"
     assert cfg["budget_limit"] == 4000000
     assert cfg["budget_limit_day"] == 200000
+
+
+# ---------- источник медиа: ссылка или локальный файл ----------
+
+def test_public_url_creative_no_longer_skipped(tmp_path, monkeypatch):
+    """Креатив, отданный публичной ссылкой, раньше пропускался как «файл не найден».
+
+    В итоге у группы не оставалось объявлений и залив падал целиком.
+    """
+    ws = _workspace(tmp_path, creatives=DEFAULT_CREATIVES, audiences=DEFAULT_AUDIENCES)
+    uploaded = []
+
+    def fake_upload_image(self, source):
+        uploaded.append(str(source))
+        return {"id": 4242}
+
+    monkeypatch.setattr(MediaAPI, "upload_image", fake_upload_image)
+
+    plan = dc.deploy(ws, dry_run=True, skip_media=False)
+
+    assert uploaded == ["https://example.com/a.png"]
+    assert plan["banners_created"], "объявление должно собраться на картинке из ссылки"
+
+
+def test_image_url_wins_over_local_file(tmp_path):
+    """Ссылка маркетолога приоритетнее нашей генерации с тем же именем."""
+    local = tmp_path / "cr1.png"
+    local.write_bytes(b"\x89PNG")
+    assert dc._image_source({"image_url": "https://example.com/x.png"}, local) == "https://example.com/x.png"
+
+
+def test_local_file_used_when_no_url(tmp_path):
+    local = tmp_path / "cr1.png"
+    local.write_bytes(b"\x89PNG")
+    assert dc._image_source({}, local) == local
+
+
+def test_no_source_at_all(tmp_path):
+    assert dc._image_source({}, tmp_path / "нет.png") is None
+
+
+def test_carousel_prefers_url_list(tmp_path):
+    urls = ["https://example.com/1.png", "https://example.com/2.png"]
+    assert dc._carousel_sources({"image_urls": urls}, tmp_path, "cr1") == urls
+
+
+def test_carousel_falls_back_to_card_files(tmp_path):
+    for i in (1, 2):
+        (tmp_path / f"cr1_card{i}.png").write_bytes(b"\x89PNG")
+    sources = dc._carousel_sources({}, tmp_path, "cr1")
+    assert [p.name for p in sources] == ["cr1_card1.png", "cr1_card2.png"]
+
+
+def test_video_url_source():
+    assert dc._video_source({"video_url": "https://example.com/v.mp4"}, Path("нет.mp4")) \
+        == "https://example.com/v.mp4"
+
+
+@pytest.mark.parametrize("source, shown", [
+    ("https://example.com/pic.png", "https://example.com/pic.png"),
+    (Path("assets/images/cr1.png"), "cr1.png"),
+])
+def test_describe_source(source, shown):
+    assert dc._describe(source) == shown
