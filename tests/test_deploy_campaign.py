@@ -270,3 +270,25 @@ def test_video_url_source():
 ])
 def test_describe_source(source, shown):
     assert dc._describe(source) == shown
+
+
+# ---------- отметки времени ----------
+
+def test_utc_now_is_timezone_aware():
+    """`datetime.utcnow()` отдаёт naive-время и намечен к удалению в Python."""
+    now = dc._utc_now()
+    assert now.tzinfo is not None
+    assert now.utcoffset().total_seconds() == 0
+
+
+def test_timestamps_carry_offset(tmp_path, _media):
+    """По строке в deploy_plan.json должно быть видно, что это UTC, а не локальное."""
+    ws = _workspace(tmp_path, creatives=DEFAULT_CREATIVES, audiences=DEFAULT_AUDIENCES)
+    plan = dc.deploy(ws, dry_run=True, skip_media=True)
+    assert plan["started_at"].endswith("+00:00")
+    assert plan["finished_at"].endswith("+00:00")
+
+
+def test_no_deprecated_utcnow_left():
+    src = (Path(dc.__file__)).read_text(encoding="utf-8")
+    assert "utcnow()" not in src.replace("`datetime.utcnow()`", "")

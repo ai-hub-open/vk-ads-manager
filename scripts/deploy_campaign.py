@@ -5,9 +5,11 @@ deploy_campaign.py — финальный модуль M4. Читает рабо
 
     media → ad_plan (кампания) → campaigns (группы) → banners (объявления)
 
-Связи проставляются автоматически (группа.ad_plan_id, объявление.campaign_id),
-поэтому orphan-групп не возникает. Все объекты создаются в status=blocked;
-активация НИКОГДА не выполняется здесь (только вручную после чек-листа + ОРД).
+Группа получает ad_plan_id автоматически, поэтому orphan-групп не возникает, а
+объявления уходят вложенным массивом внутри группы: отдельного создания
+объявления в API нет (`POST /banners.json` → 405). Все объекты создаются в
+status=blocked; активация НИКОГДА не выполняется здесь (только вручную после
+чек-листа + ОРД).
 
 Использование:
     python -m scripts.deploy_campaign --workspace <path> --dry-run   # только план
@@ -23,7 +25,7 @@ deploy_campaign.py — финальный модуль M4. Читает рабо
 Что создаёт в VK:
 - 1 ad_plan (Кампания, status=blocked) — цель + общий бюджет
 - N campaigns (Группы, по числу аудиторий, status=blocked) — таргетинги/плейсменты/дневной бюджет
-- M banners (Объявления, status=blocked) — привязаны к группе через campaign_id
+- M banners (Объявления, status=blocked) — создаются вместе со своей группой
 
 Что НЕ делает:
 - Не активирует (status=active никогда не ставится тут)
@@ -33,7 +35,7 @@ deploy_campaign.py — финальный модуль M4. Читает рабо
 import argparse
 import json
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -52,6 +54,17 @@ except ImportError:
 
 
 # ============ Helpers ============
+
+def _utc_now() -> datetime:
+    """Текущее время UTC с указанием зоны.
+
+    Не `datetime.utcnow()`: он возвращает naive-время и с Python 3.12 объявлен
+    устаревшим (намечен к удалению). Пометка зоны заодно делает `started_at`
+    в `deploy_plan.json` однозначным — раньше по строке нельзя было понять,
+    UTC там или локальное время машины.
+    """
+    return datetime.now(timezone.utc)
+
 
 def rub_to_kopecks(rub: float) -> int:
     return int(round(rub * 100))
@@ -310,7 +323,7 @@ def deploy(workspace: Path, dry_run: bool, skip_media: bool) -> dict:
 
     plan = {
         "workspace": str(workspace),
-        "started_at": datetime.utcnow().isoformat(),
+        "started_at": _utc_now().isoformat(),
         "dry_run": dry_run,
         "media_uploaded": [],
         "ad_plan": None,
@@ -399,7 +412,7 @@ def deploy(workspace: Path, dry_run: bool, skip_media: bool) -> dict:
     elif dry_run:
         print("  [DRY-RUN] — ничего не создано в кабинете")
 
-    plan["finished_at"] = datetime.utcnow().isoformat()
+    plan["finished_at"] = _utc_now().isoformat()
 
     plan_path = workspace / "assets" / "deploy_plan.json"
     plan_path.parent.mkdir(parents=True, exist_ok=True)
@@ -409,7 +422,7 @@ def deploy(workspace: Path, dry_run: bool, skip_media: bool) -> dict:
 
     log_path = workspace / "operations_log.md"
     log_entry = (
-        f"\n## {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC — deploy_campaign\n"
+        f"\n## {_utc_now().strftime('%Y-%m-%d %H:%M:%S')} UTC — deploy_campaign\n"
         f"**Mode:** {'DRY-RUN' if dry_run else 'REAL'}\n"
         f"**Ad plan (кампания) id:** {ad_plan_id if not dry_run else '—'}\n"
         f"**Группы:** {len(plan['groups_created'])}\n"
