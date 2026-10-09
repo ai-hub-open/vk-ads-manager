@@ -57,6 +57,8 @@ EXCLUDE_DIRS = {
     ".venv",
     "venv",
     "dist",
+    ".claude-plugin",  # манифест плагина для Claude Code — в архиве .skill не нужен
+    ".github",         # CI репозитория
 }
 EXCLUDE_GLOBS = {"*.pyc", "*.pyo", "*.swp", "*.bak", "*.tmp"}
 # Инструменты сборки и репозиторные файлы: нужны разработчику скилла, внутри

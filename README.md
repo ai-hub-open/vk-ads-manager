@@ -45,6 +45,28 @@
 
 ## Установка
 
+### Claude Code — плагином, с обновлениями
+
+В сессии Claude Code:
+
+```
+/plugin marketplace add ai-hub-open/claude-plugins
+/plugin install vk-ads-manager@ai-hub-open
+```
+
+Скилл вызывается как `/vk-ads-manager:vk-ads-manager` или просьбой своими словами («запусти таргет в VK»).
+
+Затем включите автообновление: `/plugin` → **Marketplaces** → `ai-hub-open` → **Enable auto-update**.
+С ним новые версии приходят сами при старте сессии. Без него — командой
+`/plugin marketplace update ai-hub-open`.
+
+Python-зависимости плагин сам не ставит — один раз выполните `python install.py` в папке плагина
+(путь покажет `/plugin` → vk-ads-manager). Ключи хранятся в `~/.vk-ads-manager/`, вне папки плагина, —
+обновление их не трогает. Если раньше скилл лежал папкой в `~/.claude/skills/`, удалите её, иначе
+скилл будет загружаться дважды.
+
+### Вручную — папкой или архивом
+
 Скачайте репозиторий, откройте его папку и запустите:
 
 ```bash

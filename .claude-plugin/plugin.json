@@ -1,0 +1,10 @@
+{
+  "name": "vk-ads-manager",
+  "version": "0.7.0",
+  "description": "VK Реклама (ads.vk.ru) от брифа до залива и работы с активной кампанией: конкуренты, персоны, аудитории, УТП, прогноз, креативы, залив через MCP или API, мониторинг и оптимизация",
+  "author": { "name": "ai-hub-open" },
+  "homepage": "https://github.com/ai-hub-open/vk-ads-manager",
+  "repository": "https://github.com/ai-hub-open/vk-ads-manager",
+  "license": "Apache-2.0",
+  "keywords": ["vk-ads", "vk-reklama", "targeting", "ppc", "ads"]
+}
