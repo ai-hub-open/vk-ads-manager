@@ -185,14 +185,32 @@ def test_dev_harness_excluded_from_package(tmp_path):
     assert "SKILL.md" in names
 
 
+def test_plugin_manifest_and_ci_excluded_version_kept(tmp_path):
+    """Манифест плагина Claude Code и CI в .skill не нужны, а VERSION нужен:
+    по нему скилл в начале разговора узнаёт, что вышла новая версия."""
+    root = _make_skill(tmp_path / "skill")
+    (root / ".claude-plugin").mkdir()
+    (root / ".claude-plugin" / "plugin.json").write_text('{"name": "vk-ads-manager"}', encoding="utf-8")
+    (root / ".github" / "workflows").mkdir(parents=True)
+    (root / ".github" / "workflows" / "ci.yml").write_text("name: ci", encoding="utf-8")
+    (root / "VERSION").write_text("0.7.0\n", encoding="utf-8")
+
+    result = ps.package_skill(root, output_dir=tmp_path / "out")
+
+    names = {n.split("/", 1)[1] for n in zipfile.ZipFile(result).namelist()}
+    assert not any(n.startswith((".claude-plugin/", ".github/")) for n in names)
+    assert "VERSION" in names
+
+
 def test_real_repo_package_has_no_dev_files(tmp_path):
     """Контрольная сборка настоящего репозитория: харнес наружу не уезжает."""
     result = ps.package_skill(REPO_ROOT, output_dir=tmp_path / "out")
     assert result is not None
     names = {n.split("/", 1)[1] for n in zipfile.ZipFile(result).namelist()}
     leaked = [n for n in names
-              if n.startswith(("tests/", "evals/", "assets/", ".pytest_cache"))
+              if n.startswith(("tests/", "evals/", "assets/", ".pytest_cache",
+                               ".claude-plugin/", ".github/"))
               or n in ("pytest.ini", "requirements-dev.txt", "package.sh",
                        "package.bat", "CHANGELOG.md", ".gitignore")]
     assert leaked == []
-    assert {"SKILL.md", "README.md", "LICENSE", "install.py", "requirements.txt"} <= names
+    assert {"SKILL.md", "README.md", "LICENSE", "install.py", "requirements.txt", "VERSION"} <= names
