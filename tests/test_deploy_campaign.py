@@ -375,7 +375,8 @@ def test_guard_override_with_flag(tmp_path, _media):
 def test_guard_checks_ad_plan_daily_budget(tmp_path, _media):
     creatives = {"campaign": {"name": "Т", "objective": "leadads", "budget_limit_day": 150_000},
                  "creatives": DEFAULT_CREATIVES["creatives"]}
-    ws = _workspace(tmp_path, creatives=creatives, audiences=DEFAULT_AUDIENCES)
+    auds = [{**DEFAULT_AUDIENCES[0], "daily_budget_rub": 100_000}]
+    ws = _workspace(tmp_path, creatives=creatives, audiences=auds)
     with pytest.raises(dc.DeployPlanError, match="150 000"):
         dc.deploy(ws, dry_run=True, skip_media=True)
 
@@ -387,3 +388,32 @@ def test_cli_has_confirm_large_budget_flag(tmp_path, _media, monkeypatch):
     monkeypatch.setattr("sys.argv", ["deploy_campaign.py", "--workspace", str(ws), "--dry-run",
                                      "--confirm-large-budget"])
     assert dc.main() in (0, 2)
+
+
+# ---------- ревью: сверка с группами без _state.json, вывод бюджетов ----------
+
+def test_kopeck_ad_plan_daily_vs_groups_without_state(tmp_path, _media):
+    creatives = {"campaign": {"name": "Т", "objective": "leadads", "budget_limit_day": 350_000},
+                 "creatives": DEFAULT_CREATIVES["creatives"]}
+    ws = _workspace(tmp_path, creatives=creatives, audiences=DEFAULT_AUDIENCES)  # группа 500 ₽
+    assert not (ws / "_state.json").exists()
+    with pytest.raises(dc.DeployPlanError, match="в копейках из версии 0.7.0"):
+        dc.deploy(ws, dry_run=True, skip_media=True)
+
+
+def test_ad_plan_daily_consistent_with_groups_passes(tmp_path, _media):
+    creatives = {"campaign": {"name": "Т", "objective": "leadads", "budget_limit_day": 5_000},
+                 "creatives": DEFAULT_CREATIVES["creatives"]}
+    ws = _workspace(tmp_path, creatives=creatives, audiences=DEFAULT_AUDIENCES)
+    assert dc.deploy(ws, dry_run=True, skip_media=True)["ad_plan"]
+
+
+def test_deploy_prints_budgets_in_rubles(tmp_path, _media, capsys):
+    creatives = {"campaign": {"name": "Т", "objective": "leadads", "budget_limit": 60000,
+                              "budget_limit_day": 4000},
+                 "creatives": DEFAULT_CREATIVES["creatives"]}
+    ws = _workspace(tmp_path, creatives=creatives, audiences=DEFAULT_AUDIENCES)
+    dc.deploy(ws, dry_run=True, skip_media=True)
+    out = capsys.readouterr().out
+    assert "Бюджет кампании" in out
+    assert "60 000 ₽" in out and "4 000 ₽" in out

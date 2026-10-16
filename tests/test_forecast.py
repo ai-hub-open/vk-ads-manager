@@ -222,3 +222,34 @@ def test_render_shows_percent_input_correctly():
                        "ctr": {"low": 0.5, "mid": 0.5, "high": 0.5, "source": "api", "unit": "percent"}}}
     report = fc.render(cfg)
     assert "0.50%" in report
+
+
+# ---------- ревью: подозрительно малый CTR из api ----------
+
+def _api_cfg(ctr, unit=None):
+    spec = {"low": ctr, "mid": ctr, "high": ctr, "source": "api"}
+    if unit:
+        spec["unit"] = unit
+    return {"product": "X", "budgets": {"target": 40000},
+            "metrics": {"cpm": {"mid": 200, "source": "api"}, "ctr": spec}}
+
+
+def test_warns_when_api_ctr_looks_like_fraction_read_as_percent():
+    """0.006 из api без unit -> прочитано как 0.006 % = 0.00006: скорее всего это уже доля."""
+    cfg = _api_cfg(0.006)
+    scn = fc.compute_scenario("target", 40000, cfg["metrics"])
+    checks = fc.reality_checks(scn, cfg)
+    assert any("CTR уже доля, а не проценты" in c and "unit" in c for c in checks)
+
+
+def test_no_warning_for_normal_api_ctr():
+    cfg = _api_cfg(0.52)
+    scn = fc.compute_scenario("target", 40000, cfg["metrics"])
+    assert not any("уже доля" in c for c in fc.reality_checks(scn, cfg))
+
+
+def test_no_warning_for_benchmark_small_ctr():
+    cfg = _api_cfg(0.0004)
+    cfg["metrics"]["ctr"]["source"] = "benchmark"
+    scn = fc.compute_scenario("target", 40000, cfg["metrics"])
+    assert not any("уже доля" in c for c in fc.reality_checks(scn, cfg))

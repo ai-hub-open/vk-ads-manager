@@ -86,8 +86,18 @@ class BudgetGuardError(ValueError):
 
 
 def budget_rub(value):
-    """Рубли для API: целое — как int, дробное — до 2 знаков (копейки)."""
-    rounded = round(float(value), 2)
+    """Рубли для API: целое — как int, дробное — до 2 знаков (копейки).
+
+    Мусор (не число, NaN, inf, отрицательное) — BudgetGuardError, а не traceback.
+    """
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise BudgetGuardError(f"Не могу прочитать бюджет {value!r}: нужно число в рублях.")
+    if number != number or number in (float("inf"), float("-inf")) or number < 0:
+        raise BudgetGuardError(
+            f"Некорректный бюджет {value!r}: нужно конечное неотрицательное число в рублях.")
+    rounded = round(number, 2)
     if rounded == int(rounded):
         return int(rounded)
     return rounded
@@ -108,6 +118,9 @@ def check_budget_guard(daily_rub=None, total_rub=None, confirmed: bool = False,
     (раньше скилл умножал рубли на 100). Сообщение называет сумму в рублях.
     """
     problems = []
+    # сравниваем то, что реально уйдёт в API (округлённое), а не сырой ввод
+    daily_rub = None if daily_rub is None else budget_rub(daily_rub)
+    total_rub = None if total_rub is None else budget_rub(total_rub)
     if daily_rub is not None and daily_rub > MAX_DAILY_BUDGET_RUB:
         problems.append(f"дневной бюджет {fmt_rub(daily_rub)} (порог {fmt_rub(MAX_DAILY_BUDGET_RUB)})")
     if total_rub is not None and total_rub > MAX_TOTAL_BUDGET_RUB:
@@ -116,8 +129,29 @@ def check_budget_guard(daily_rub=None, total_rub=None, confirmed: bool = False,
         raise BudgetGuardError(
             "Слишком большой бюджет: " + "; ".join(problems) + ". "
             "API принимает рубли, не копейки — проверь, что сумма в рублях. "
-            f"Если сумма верна, повтори с флагом {flag}."
+            f"Назови пользователю сумму в рублях; флаг {flag} — только после его явного «да, сумма верна»."
         )
+
+
+def check_kopeck_units(campaign: dict, state: Optional[dict] = None, group_daily=None) -> None:
+    """Ловит бюджеты в копейках из 0.7.0 (рубли ×100), не опираясь на единственный источник.
+
+    * `campaign.budget_limit`/`budget_limit_day` ≥ 100× `_state.json` `budget_rub`/`daily_budget_rub`;
+    * дневной бюджет кампании ≥ 100× суммы дневных бюджетов групп (они всегда в рублях).
+    """
+    msg = ("{what}: похоже, бюджет в копейках из версии 0.7.0 — укажите в рублях "
+           "(API принимает рубли; сейчас {val} против {ref}).")
+    state = state or {}
+    for key, state_key in (("budget_limit", "budget_rub"), ("budget_limit_day", "daily_budget_rub")):
+        val, ref = campaign.get(key), state.get(state_key)
+        if val and ref and budget_rub(val) >= 100 * budget_rub(ref):
+            raise BudgetGuardError(msg.format(what=f"{key} в creatives.json", val=fmt_rub(val),
+                                              ref=f"{state_key}={fmt_rub(ref)} в _state.json"))
+    groups = [budget_rub(g) for g in (group_daily or []) if g]
+    day = campaign.get("budget_limit_day")
+    if day and groups and sum(groups) > 0 and budget_rub(day) >= 100 * sum(groups):
+        raise BudgetGuardError(msg.format(what="дневной бюджет кампании", val=fmt_rub(day),
+                                          ref=f"сумма дневных бюджетов групп {fmt_rub(sum(groups))}"))
 
 
 class VKAdsError(Exception):
@@ -724,9 +758,9 @@ def cmd_campaign_update(args):
         try:
             check_budget_guard(daily_rub=args.budget,
                                confirmed=getattr(args, "confirm_large_budget", False))
+            payload["budget_limit_day"] = budget_rub(args.budget)  # рубли, не копейки
         except BudgetGuardError as e:
             raise SystemExit(str(e))
-        payload["budget_limit_day"] = budget_rub(args.budget)  # рубли, не копейки
     if args.status:
         payload["status"] = args.status
     if not payload:

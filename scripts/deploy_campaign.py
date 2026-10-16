@@ -49,7 +49,7 @@ except ImportError:  # запуск напрямую, не как модуль �
 try:
     from scripts.credentials import load_api_key, CredentialNotFound
     from scripts.vk_ads_api import (VKAdsClient, VKAdsError, BudgetGuardError, budget_rub,
-                                    check_budget_guard)
+                                    check_budget_guard, check_kopeck_units, fmt_rub)
 except ImportError:
     sys.path.insert(0, str(Path(__file__).parent.parent))
     from scripts.credentials import load_api_key, CredentialNotFound
@@ -89,22 +89,6 @@ def load_audiences(workspace: Path) -> list:
     if isinstance(data, dict):
         return data.get("audiences", [])
     return data
-
-
-def check_old_kopeck_budgets(workspace: Path) -> None:
-    """creatives.json[campaign] с бюджетом ≥ 100× от _state.json — это копейки из 0.7.0."""
-    data = load_json(workspace / "creatives.json", default={})
-    state = load_json(workspace / "_state.json", default={}) or {}
-    if not (isinstance(data, dict) and isinstance(data.get("campaign"), dict)):
-        return
-    camp = data["campaign"]
-    for key, state_key in (("budget_limit", "budget_rub"), ("budget_limit_day", "daily_budget_rub")):
-        val, ref = camp.get(key), state.get(state_key)
-        if val and ref and float(val) >= 100 * float(ref):
-            raise DeployPlanError(
-                f"{key}={val} в creatives.json в {float(val) / float(ref):.0f} раз больше "
-                f"{state_key}={ref} из _state.json: похоже, бюджет в копейках из версии 0.7.0 — "
-                "укажите в рублях (API принимает рубли).")
 
 
 def load_ad_plan_config(workspace: Path) -> dict:
@@ -325,13 +309,20 @@ def deploy(workspace: Path, dry_run: bool, skip_media: bool,
            confirm_large_budget: bool = False) -> dict:
     creatives = load_creatives(workspace)
     audiences = load_audiences(workspace)
-    check_old_kopeck_budgets(workspace)
     ad_plan_cfg = load_ad_plan_config(workspace)
 
     if not creatives:
         raise DeployPlanError(f"Не найден creatives.json или он пустой: {workspace}")
     if not audiences:
         raise DeployPlanError(f"Не найден audiences.json или он пустой: {workspace}")
+
+    # Единицы: бюджет в копейках из 0.7.0 ловим по _state.json и по группам (они всегда в рублях)
+    group_daily = [a.get("daily_budget_rub", 500) for a in audiences]
+    try:
+        check_kopeck_units(ad_plan_cfg, load_json(workspace / "_state.json", default={}) or {},
+                           group_daily)
+    except BudgetGuardError as e:
+        raise DeployPlanError(str(e))
 
     # Защита от ошибки единиц: большие суммы — только с явным флагом (и в dry-run тоже)
     for what, daily, total in (
@@ -342,6 +333,13 @@ def deploy(workspace: Path, dry_run: bool, skip_media: bool,
             check_budget_guard(daily_rub=daily, total_rub=total, confirmed=confirm_large_budget)
         except BudgetGuardError as e:
             raise DeployPlanError(f"{what}: {e}")
+
+    # Бюджеты в рублях — для «бюджет X — ОК?» (dry-run и боевой запуск)
+    groups_sum = sum(budget_rub(g) for g in group_daily)
+    print("Бюджет кампании (в рублях): "
+          f"общий {fmt_rub(ad_plan_cfg['budget_limit']) if ad_plan_cfg.get('budget_limit') is not None else 'не задан'}, "
+          f"дневной {fmt_rub(ad_plan_cfg['budget_limit_day']) if ad_plan_cfg.get('budget_limit_day') is not None else 'не задан'}; "
+          f"дневные бюджеты групп: {fmt_rub(groups_sum)} ({len(group_daily)} гр.)")
 
     if dry_run:
         client = VKAdsClient(access_token="DRY_RUN_TOKEN", dry_run=True)

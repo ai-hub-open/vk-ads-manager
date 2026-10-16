@@ -285,3 +285,53 @@ def test_stats_cost_in_rubles_and_ctr_in_percent(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "1234 ₽" in out or "1235 ₽" in out
     assert "CTR 0.52%" in out
+
+
+# ---------- ревью: согласие пользователя, мусорные суммы, единицы ----------
+
+def test_guard_message_requires_user_consent():
+    with pytest.raises(api.BudgetGuardError) as e:
+        api.check_budget_guard(daily_rub=150000)
+    msg = str(e.value)
+    assert "Назови пользователю сумму в рублях" in msg
+    assert "только после его явного" in msg and "да, сумма верна" in msg
+    assert "повтори с флагом" not in msg
+
+
+def test_guard_compares_rounded_value():
+    api.check_budget_guard(daily_rub=100000.004)          # пишется как 100000 — проходит
+    with pytest.raises(api.BudgetGuardError):
+        api.check_budget_guard(daily_rub=100000.006)      # пишется как 100000.01
+
+
+@pytest.mark.parametrize("bad", ["abc", float("inf"), float("nan"), None, "", -5])
+def test_budget_rub_rejects_garbage(bad):
+    with pytest.raises(api.BudgetGuardError, match="бюджет"):
+        api.budget_rub(bad)
+
+
+def test_guard_rejects_garbage():
+    with pytest.raises(api.BudgetGuardError):
+        api.check_budget_guard(daily_rub=float("nan"))
+
+
+def test_campaign_update_nan_budget_is_clear_refusal(monkeypatch):
+    fake = _patch_client(monkeypatch)
+    with pytest.raises(SystemExit) as e:
+        api.cmd_campaign_update(_ns(budget=float("inf")))
+    assert "бюджет" in str(e.value)
+    assert fake.ad_plans.updated is None
+
+
+def test_kopeck_units_vs_groups():
+    with pytest.raises(api.BudgetGuardError, match="в копейках из версии 0.7.0"):
+        api.check_kopeck_units({"budget_limit_day": 350000}, group_daily=[1000, 2500])
+    api.check_kopeck_units({"budget_limit_day": 3500}, group_daily=[1000, 2500])
+    api.check_kopeck_units({"budget_limit_day": 350000}, group_daily=[])      # нечем сверять
+    api.check_kopeck_units({"budget_limit_day": 350000}, group_daily=[0])
+
+
+def test_kopeck_units_vs_state():
+    with pytest.raises(api.BudgetGuardError, match="в копейках из версии 0.7.0"):
+        api.check_kopeck_units({"budget_limit": 5_000_000}, state={"budget_rub": 50000})
+    api.check_kopeck_units({"budget_limit": 50000}, state={"budget_rub": 50000})

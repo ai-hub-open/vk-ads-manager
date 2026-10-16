@@ -30,9 +30,11 @@ from typing import Optional
 try:
     from scripts._console import setup_console
     from scripts._workspace import resolve_workspace
+    from scripts.vk_ads_api import BudgetGuardError, check_kopeck_units
 except ImportError:  # запуск напрямую, не как модуль пакета
     from _console import setup_console
     from _workspace import resolve_workspace
+    from vk_ads_api import BudgetGuardError, check_kopeck_units
 
 
 def load_json(path: Path, default=None):
@@ -176,6 +178,8 @@ def build_guide(workspace: Path) -> str:
     campaign = load_campaign_config(workspace)
     state = load_json(workspace / "_state.json", default={})
     brand = load_json(workspace / "brand.json", default={})
+    # те же проверки единиц, что и в deploy: бюджеты в рублях, не копейки из 0.7.0
+    check_kopeck_units(campaign, state or {}, [a.get("daily_budget_rub") for a in audiences])
 
     # ОРД реквизиты из state или brand
     agent = state.get("agent_relationship", {})
@@ -506,7 +510,11 @@ def main():
         print(f"ERROR: не найден creatives.json в {workspace}", file=sys.stderr)
         return 1
 
-    guide = build_guide(workspace)
+    try:
+        guide = build_guide(workspace)
+    except BudgetGuardError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 1
 
     md_path = workspace / "LAUNCH_GUIDE.md"
     md_path.write_text(guide, encoding="utf-8")

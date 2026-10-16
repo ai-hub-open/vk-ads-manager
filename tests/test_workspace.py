@@ -148,3 +148,21 @@ def test_setup_user_target_allowed_inside_skill(monkeypatch):
 ])
 def test_secret_files_excluded_from_package(rel):
     assert package_skill.should_exclude(Path(rel))
+
+
+# ---------- ревью: launch guide сверяет единицы бюджета ----------
+
+def test_launch_guide_refuses_kopeck_budgets(tmp_path):
+    import json
+    import pytest
+    from scripts import generate_launch_guide as lg
+    from scripts.vk_ads_api import BudgetGuardError
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "creatives.json").write_text(json.dumps(
+        {"campaign": {"name": "Т", "objective": "conversions", "budget_limit_day": 350000},
+         "creatives": [{"name": "c", "audience": "H1"}]}), encoding="utf-8")
+    (ws / "audiences.json").write_text(json.dumps(
+        [{"id": "H1", "name": "A", "daily_budget_rub": 3500, "config": {}}]), encoding="utf-8")
+    with pytest.raises(BudgetGuardError, match="в копейках из версии 0.7.0"):
+        lg.build_guide(ws)

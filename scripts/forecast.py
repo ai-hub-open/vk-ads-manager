@@ -143,6 +143,14 @@ def reality_checks(scn, cfg):
     if scn["ctr"] and scn["ctr"] > 0.025:
         out.append(f"⚠️ {SCENARIO_RU[scn['name']]}: CTR {scn['ctr']*100:.1f}% оптимистичен для холода "
                    f"(реалистично 0.3–0.8%).")
+    for key, label in (("ctr", "CTR"), ("cr_landing", "CR")):
+        spec = cfg.get("metrics", {}).get(key)
+        if spec and spec.get("source") == "api":
+            v = m(cfg["metrics"], key, SCENARIO_PICK[scn["name"]][key])
+            if v is not None and v < 0.0005:
+                out.append(f"⚠️ {SCENARIO_RU[scn['name']]}: {label} {v*100:.4f}% из api нереально мал — "
+                           f"похоже, {label} уже доля, а не проценты — проверьте unit "
+                           f'(`"unit": "fraction"` для доли, `"percent"` для процентов).')
     if cap and scn["leads"] is not None and scn["leads"] > cap:
         out.append(f"⚠️ {SCENARIO_RU[scn['name']]}: ~{scn['leads']:.0f} лидов > пропускной "
                    f"способности отдела продаж ({cap}).")
