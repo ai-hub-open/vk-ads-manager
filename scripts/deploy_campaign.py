@@ -41,16 +41,20 @@ from typing import Optional
 
 try:
     from scripts._console import setup_console
+    from scripts._workspace import resolve_workspace
 except ImportError:  # запуск напрямую, не как модуль пакета
     from _console import setup_console
+    from _workspace import resolve_workspace
 
 try:
     from scripts.credentials import load_api_key, CredentialNotFound
-    from scripts.vk_ads_api import VKAdsClient, VKAdsError
+    from scripts.vk_ads_api import (VKAdsClient, VKAdsError, BudgetGuardError, budget_rub,
+                                    check_budget_guard, check_kopeck_units, fmt_rub)
 except ImportError:
     sys.path.insert(0, str(Path(__file__).parent.parent))
     from scripts.credentials import load_api_key, CredentialNotFound
-    from scripts.vk_ads_api import VKAdsClient, VKAdsError
+    from scripts.vk_ads_api import (VKAdsClient, VKAdsError, BudgetGuardError, budget_rub,
+                                    check_budget_guard)
 
 
 # ============ Helpers ============
@@ -64,10 +68,6 @@ def _utc_now() -> datetime:
     UTC там или локальное время машины.
     """
     return datetime.now(timezone.utc)
-
-
-def rub_to_kopecks(rub: float) -> int:
-    return int(round(rub * 100))
 
 
 def load_json(path: Path, default=None):
@@ -97,14 +97,17 @@ def load_ad_plan_config(workspace: Path) -> dict:
     if isinstance(creatives_data, dict) and "campaign" in creatives_data:
         cfg = dict(creatives_data["campaign"])
         cfg.setdefault("status", "blocked")
+        for key in ("budget_limit", "budget_limit_day"):  # рубли, как принимает API
+            if cfg.get(key) is not None:
+                cfg[key] = budget_rub(cfg[key])
         return cfg
     state = load_json(workspace / "_state.json", default={})
     return {
         "name": f"{state.get('brand_name_ru', 'Campaign')} — VK тест",
         "objective": state.get("objective", "conversions"),
         "status": "blocked",
-        "budget_limit": rub_to_kopecks(state.get("budget_rub", 50000)),
-        "budget_limit_day": rub_to_kopecks(state.get("daily_budget_rub", 3500)),
+        "budget_limit": budget_rub(state.get("budget_rub", 50000)),
+        "budget_limit_day": budget_rub(state.get("daily_budget_rub", 3500)),
         "bid_strategy": state.get("bid_strategy", "minimal_price"),
     }
 
@@ -302,7 +305,8 @@ class DeployPlanError(Exception):
     pass
 
 
-def deploy(workspace: Path, dry_run: bool, skip_media: bool) -> dict:
+def deploy(workspace: Path, dry_run: bool, skip_media: bool,
+           confirm_large_budget: bool = False) -> dict:
     creatives = load_creatives(workspace)
     audiences = load_audiences(workspace)
     ad_plan_cfg = load_ad_plan_config(workspace)
@@ -311,6 +315,31 @@ def deploy(workspace: Path, dry_run: bool, skip_media: bool) -> dict:
         raise DeployPlanError(f"Не найден creatives.json или он пустой: {workspace}")
     if not audiences:
         raise DeployPlanError(f"Не найден audiences.json или он пустой: {workspace}")
+
+    # Единицы: бюджет в копейках из 0.7.0 ловим по _state.json и по группам (они всегда в рублях)
+    group_daily = [a.get("daily_budget_rub", 500) for a in audiences]
+    try:
+        check_kopeck_units(ad_plan_cfg, load_json(workspace / "_state.json", default={}) or {},
+                           group_daily)
+    except BudgetGuardError as e:
+        raise DeployPlanError(str(e))
+
+    # Защита от ошибки единиц: большие суммы — только с явным флагом (и в dry-run тоже)
+    for what, daily, total in (
+        [("кампания", ad_plan_cfg.get("budget_limit_day"), ad_plan_cfg.get("budget_limit"))]
+        + [(f"группа {a.get('id', '?')}", a.get("daily_budget_rub", 500), None) for a in audiences]
+    ):
+        try:
+            check_budget_guard(daily_rub=daily, total_rub=total, confirmed=confirm_large_budget)
+        except BudgetGuardError as e:
+            raise DeployPlanError(f"{what}: {e}")
+
+    # Бюджеты в рублях — для «бюджет X — ОК?» (dry-run и боевой запуск)
+    groups_sum = sum(budget_rub(g) for g in group_daily)
+    print("Бюджет кампании (в рублях): "
+          f"общий {fmt_rub(ad_plan_cfg['budget_limit']) if ad_plan_cfg.get('budget_limit') is not None else 'не задан'}, "
+          f"дневной {fmt_rub(ad_plan_cfg['budget_limit_day']) if ad_plan_cfg.get('budget_limit_day') is not None else 'не задан'}; "
+          f"дневные бюджеты групп: {fmt_rub(groups_sum)} ({len(group_daily)} гр.)")
 
     if dry_run:
         client = VKAdsClient(access_token="DRY_RUN_TOKEN", dry_run=True)
@@ -359,7 +388,7 @@ def deploy(workspace: Path, dry_run: bool, skip_media: bool) -> dict:
             "name": f"{aud_id} — {aud.get('name', 'unnamed')}",
             "targetings": audience_to_targeting(aud),
             "placements": ["vk_feed", "vk_clips", "ok_feed"],
-            "budget_limit_day": rub_to_kopecks(aud.get("daily_budget_rub", 500)),
+            "budget_limit_day": budget_rub(aud.get("daily_budget_rub", 500)),
         }
         banners = []
         for cr in creatives:
@@ -447,15 +476,22 @@ def main():
         action="store_true",
         help="Не загружать медиа, использовать vk_image_id/vk_video_id из creatives.json",
     )
+    parser.add_argument(
+        "--confirm-large-budget",
+        action="store_true",
+        help="Разрешить дневной бюджет выше 100 000 ₽ или общий выше 10 000 000 ₽ "
+             "(защита от ошибки единиц)",
+    )
     args = parser.parse_args()
 
-    workspace = Path(args.workspace)
+    workspace = resolve_workspace(args.workspace)
     if not workspace.exists():
         print(f"ERROR: {workspace} не существует", file=sys.stderr)
         return 1
 
     try:
-        plan = deploy(workspace, dry_run=args.dry_run, skip_media=args.skip_media_upload)
+        plan = deploy(workspace, dry_run=args.dry_run, skip_media=args.skip_media_upload,
+                      confirm_large_budget=args.confirm_large_budget)
     except DeployPlanError as e:
         print(f"\nERROR: {e}", file=sys.stderr)
         return 1

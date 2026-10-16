@@ -16,8 +16,10 @@ from datetime import datetime
 
 try:
     from scripts._console import setup_console
+    from scripts._workspace import resolve_workspace
 except ImportError:  # запуск напрямую, не как модуль пакета
     from _console import setup_console
+    from _workspace import resolve_workspace
 
 
 ARTIFACTS_ORDER = [
@@ -131,7 +133,7 @@ def main():
     parser.add_argument("--format", choices=["docx", "md", "auto"], default="auto")
     args = parser.parse_args()
 
-    workspace = Path(args.workspace)
+    workspace = resolve_workspace(args.workspace)
     if not workspace.exists():
         print(f"ERROR: workspace {workspace} не существует", file=sys.stderr)
         return 1

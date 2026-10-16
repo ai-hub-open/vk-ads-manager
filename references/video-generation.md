@@ -264,18 +264,19 @@ python -m scripts.generate_creative_videos \
 Отдельный модуль с CLI:
 
 ```bash
+# Пути — абсолютные, внутри рабочей папки кампании (<workspace> = vk-campaign-<slug>/ вне папки скилла)
 # Проверить установлен ли ffmpeg
 python -m scripts.video_concat check
 
 # Склеить вручную
-python -m scripts.video_concat concat --input s1.mp4 s2.mp4 s3.mp4 --output final.mp4
+python -m scripts.video_concat concat --input <workspace>/s1.mp4 <workspace>/s2.mp4 <workspace>/s3.mp4 --output <workspace>/final.mp4
 
 # Извлечь последний кадр (для chain)
-python -m scripts.video_concat last-frame --input video.mp4 --output last.png
+python -m scripts.video_concat last-frame --input <workspace>/video.mp4 --output <workspace>/last.png
 
 # Добавить overlay-текст
 python -m scripts.video_concat overlay-text \
-  --input video.mp4 --output result.mp4 \
+  --input <workspace>/video.mp4 --output <workspace>/result.mp4 \
   --text "5 готовых процессов" --position bottom
 ```
 

@@ -29,8 +29,12 @@ from typing import Optional
 
 try:
     from scripts._console import setup_console
+    from scripts._workspace import resolve_workspace
+    from scripts.vk_ads_api import BudgetGuardError, check_kopeck_units
 except ImportError:  # запуск напрямую, не как модуль пакета
     from _console import setup_console
+    from _workspace import resolve_workspace
+    from vk_ads_api import BudgetGuardError, check_kopeck_units
 
 
 def load_json(path: Path, default=None):
@@ -54,8 +58,8 @@ def load_campaign_config(workspace: Path) -> dict:
     state = load_json(workspace / "_state.json", default={})
     return {
         "name": f"{state.get('brand_name_ru', 'Campaign')} — VK тест",
-        "budget_limit": state.get("budget_rub", 50000) * 100,
-        "budget_limit_day": state.get("daily_budget_rub", 3500) * 100,
+        "budget_limit": state.get("budget_rub", 50000),
+        "budget_limit_day": state.get("daily_budget_rub", 3500),
         "objective": "conversions",
         "bid_strategy": "minimal_price",
     }
@@ -68,8 +72,9 @@ def load_audiences(workspace: Path) -> list:
     return data
 
 
-def kop_to_rub(k: int) -> int:
-    return int(k / 100)
+def rub_int(value) -> int:
+    """Бюджеты в campaign-конфиге — рубли (как в API); для показа округляем до целых."""
+    return int(round(float(value)))
 
 
 def _ru_format_objective(obj: str) -> str:
@@ -173,6 +178,8 @@ def build_guide(workspace: Path) -> str:
     campaign = load_campaign_config(workspace)
     state = load_json(workspace / "_state.json", default={})
     brand = load_json(workspace / "brand.json", default={})
+    # те же проверки единиц, что и в deploy: бюджеты в рублях, не копейки из 0.7.0
+    check_kopeck_units(campaign, state or {}, [a.get("daily_budget_rub") for a in audiences])
 
     # ОРД реквизиты из state или brand
     agent = state.get("agent_relationship", {})
@@ -257,8 +264,8 @@ def build_guide(workspace: Path) -> str:
     lines.append(f"- Название: `{campaign.get('name', '')}`")
     lines.append(f"- Цель: **{_ru_format_objective(campaign.get('objective', 'conversions'))}**")
     lines.append(f"- Стратегия ставок: **{_ru_format_strategy(campaign.get('bid_strategy', 'minimal_price'))}**")
-    lines.append(f"- Общий бюджет: **{kop_to_rub(campaign.get('budget_limit', 5000000))} ₽**")
-    lines.append(f"- Дневной бюджет: **{kop_to_rub(campaign.get('budget_limit_day', 350000))} ₽**")
+    lines.append(f"- Общий бюджет: **{rub_int(campaign.get('budget_limit', 50000))} ₽**")
+    lines.append(f"- Дневной бюджет: **{rub_int(campaign.get('budget_limit_day', 3500))} ₽**")
     lines.append(f"- Срок: {state.get('test_period_days', 14)} дней")
     lines.append(f"- **Статус при создании:** «На паузе» — НЕ запускайте сразу, сначала добавьте группы и баннеры!")
     lines.append("")
@@ -494,7 +501,7 @@ def main():
     parser.add_argument("--docx", action="store_true", help="Также сохранить как .docx")
     args = parser.parse_args()
 
-    workspace = Path(args.workspace)
+    workspace = resolve_workspace(args.workspace)
     if not workspace.exists():
         print(f"ERROR: {workspace} не существует", file=sys.stderr)
         return 1
@@ -503,7 +510,11 @@ def main():
         print(f"ERROR: не найден creatives.json в {workspace}", file=sys.stderr)
         return 1
 
-    guide = build_guide(workspace)
+    try:
+        guide = build_guide(workspace)
+    except BudgetGuardError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 1
 
     md_path = workspace / "LAUNCH_GUIDE.md"
     md_path.write_text(guide, encoding="utf-8")

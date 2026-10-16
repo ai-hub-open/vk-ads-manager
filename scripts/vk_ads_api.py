@@ -72,6 +72,88 @@ TOKEN_URL = f"{BASE_URL}/oauth2/token.json"
 ACTIVATE_CONFIRMATION = "YES_ACTIVATE"
 
 
+# ---------- Единицы денег ----------
+# VK Ads API принимает и отдаёт budget_limit / budget_limit_day в РУБЛЯХ (не в копейках;
+# подтверждено вживую 2026-10-16: запись 500 = «500 ₽» в кабинете). Статистика: spent/cpm/cpc/cpa —
+# рубли (строки), ctr/cr — ПРОЦЕНТЫ (0.5176 = 0.52 %). Никаких ×100 / ÷100.
+
+MAX_DAILY_BUDGET_RUB = 100_000
+MAX_TOTAL_BUDGET_RUB = 10_000_000
+
+
+class BudgetGuardError(ValueError):
+    """Бюджет выше порога без явного подтверждения."""
+
+
+def budget_rub(value):
+    """Рубли для API: целое — как int, дробное — до 2 знаков (копейки).
+
+    Мусор (не число, NaN, inf, отрицательное) — BudgetGuardError, а не traceback.
+    """
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise BudgetGuardError(f"Не могу прочитать бюджет {value!r}: нужно число в рублях.")
+    if number != number or number in (float("inf"), float("-inf")) or number < 0:
+        raise BudgetGuardError(
+            f"Некорректный бюджет {value!r}: нужно конечное неотрицательное число в рублях.")
+    rounded = round(number, 2)
+    if rounded == int(rounded):
+        return int(rounded)
+    return rounded
+
+
+def fmt_rub(value) -> str:
+    """12345678 -> '12 345 678 ₽' (для сообщений пользователю)."""
+    v = budget_rub(value)
+    text = f"{v:,.2f}".rstrip("0").rstrip(".") if isinstance(v, float) else f"{v:,}"
+    return text.replace(",", " ") + " ₽"
+
+
+def check_budget_guard(daily_rub=None, total_rub=None, confirmed: bool = False,
+                       flag: str = "--confirm-large-budget") -> None:
+    """Отказ записывать подозрительно большой бюджет без явного флага.
+
+    Дневной > 100 000 ₽ или общий > 10 000 000 ₽ — почти всегда ошибка единиц
+    (раньше скилл умножал рубли на 100). Сообщение называет сумму в рублях.
+    """
+    problems = []
+    # сравниваем то, что реально уйдёт в API (округлённое), а не сырой ввод
+    daily_rub = None if daily_rub is None else budget_rub(daily_rub)
+    total_rub = None if total_rub is None else budget_rub(total_rub)
+    if daily_rub is not None and daily_rub > MAX_DAILY_BUDGET_RUB:
+        problems.append(f"дневной бюджет {fmt_rub(daily_rub)} (порог {fmt_rub(MAX_DAILY_BUDGET_RUB)})")
+    if total_rub is not None and total_rub > MAX_TOTAL_BUDGET_RUB:
+        problems.append(f"общий бюджет {fmt_rub(total_rub)} (порог {fmt_rub(MAX_TOTAL_BUDGET_RUB)})")
+    if problems and not confirmed:
+        raise BudgetGuardError(
+            "Слишком большой бюджет: " + "; ".join(problems) + ". "
+            "API принимает рубли, не копейки — проверь, что сумма в рублях. "
+            f"Назови пользователю сумму в рублях; флаг {flag} — только после его явного «да, сумма верна»."
+        )
+
+
+def check_kopeck_units(campaign: dict, state: Optional[dict] = None, group_daily=None) -> None:
+    """Ловит бюджеты в копейках из 0.7.0 (рубли ×100), не опираясь на единственный источник.
+
+    * `campaign.budget_limit`/`budget_limit_day` ≥ 100× `_state.json` `budget_rub`/`daily_budget_rub`;
+    * дневной бюджет кампании ≥ 100× суммы дневных бюджетов групп (они всегда в рублях).
+    """
+    msg = ("{what}: похоже, бюджет в копейках из версии 0.7.0 — укажите в рублях "
+           "(API принимает рубли; сейчас {val} против {ref}).")
+    state = state or {}
+    for key, state_key in (("budget_limit", "budget_rub"), ("budget_limit_day", "daily_budget_rub")):
+        val, ref = campaign.get(key), state.get(state_key)
+        if val and ref and budget_rub(val) >= 100 * budget_rub(ref):
+            raise BudgetGuardError(msg.format(what=f"{key} в creatives.json", val=fmt_rub(val),
+                                              ref=f"{state_key}={fmt_rub(ref)} в _state.json"))
+    groups = [budget_rub(g) for g in (group_daily or []) if g]
+    day = campaign.get("budget_limit_day")
+    if day and groups and sum(groups) > 0 and budget_rub(day) >= 100 * sum(groups):
+        raise BudgetGuardError(msg.format(what="дневной бюджет кампании", val=fmt_rub(day),
+                                          ref=f"сумма дневных бюджетов групп {fmt_rub(sum(groups))}"))
+
+
 class VKAdsError(Exception):
     pass
 
@@ -616,7 +698,7 @@ def cmd_audit(args):
     blocked = [c for c in plans if c.get("status") == "blocked"]
     print(f"Кампаний (ad_plans): {len(plans)}, активных: {len(active)}, на паузе: {len(blocked)}")
     for c in plans:
-        budget = c.get("budget_limit_day", 0) / 100 if c.get("budget_limit_day") else 0
+        budget = c.get("budget_limit_day") or 0  # API отдаёт рубли
         print(f"  [{c.get('status')}] {c.get('id')} '{c.get('name')}' — {budget} ₽/день")
 
 
@@ -647,8 +729,8 @@ def cmd_stats(args):
 
     print(f"Статистика за {args.days} дней ({date_from} → {date_to}):")
     for s in stats:
-        cost = s.get("cost", 0) / 100
-        ctr = s.get("ctr", 0)
+        cost = float(s.get("cost") or 0)  # рубли (в статистике может быть строкой)
+        ctr = float(s.get("ctr") or 0)  # уже ПРОЦЕНТЫ: 0.5176 = 0.52 %
         clicks = s.get("clicks", 0)
         impressions = s.get("impressions", 0)
         print(
@@ -673,7 +755,12 @@ def cmd_campaign_update(args):
 
     payload = {}
     if args.budget is not None:
-        payload["budget_limit_day"] = int(args.budget * 100)  # в копейках
+        try:
+            check_budget_guard(daily_rub=args.budget,
+                               confirmed=getattr(args, "confirm_large_budget", False))
+            payload["budget_limit_day"] = budget_rub(args.budget)  # рубли, не копейки
+        except BudgetGuardError as e:
+            raise SystemExit(str(e))
     if args.status:
         payload["status"] = args.status
     if not payload:
@@ -705,6 +792,11 @@ def main():
     p_upd.add_argument("--budget", type=float, help="Новый дневной бюджет в рублях")
     p_upd.add_argument("--status", choices=["blocked", "active", "deleted"], help="Новый статус")
     p_upd.add_argument("--confirm-activate", action="store_true")
+    p_upd.add_argument(
+        "--confirm-large-budget",
+        action="store_true",
+        help="Разрешить дневной бюджет выше 100 000 ₽ (защита от ошибки единиц)",
+    )
     p_upd.add_argument(
         "--allow-missing-ord",
         action="store_true",

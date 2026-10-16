@@ -24,8 +24,10 @@ from pathlib import Path
 
 try:
     from scripts._console import setup_console
+    from scripts._workspace import resolve_workspace
 except ImportError:  # запуск напрямую, не как модуль пакета
     from _console import setup_console
+    from _workspace import resolve_workspace
 
 VERIFIED = {"api", "client"}  # источники, которым можно доверять для лидов/CPL
 
@@ -42,7 +44,8 @@ TEMPLATE = {
         "cpm": {"low": 150, "mid": 200, "high": 280, "source": "benchmark",
                 "note": "ЗАМЕНИТЬ на CPM из vk_ads_statistics_summary похожей кампании"},
         "ctr": {"low": 0.004, "mid": 0.006, "high": 0.009, "source": "benchmark",
-                "note": "холодная лента VK; api если есть статистика"},
+                "note": "холодная лента VK; ДОЛИ (0.006 = 0.6 %). Если берёшь ctr из vk_ads_statistics_* "
+                        "(там ПРОЦЕНТЫ), ставь source \"api\" — проценты поймёт скрипт (явно: \"unit\": \"percent\")"},
         "cr_landing": {"low": 0.01, "mid": 0.02, "high": 0.04, "source": "assumption",
                        "note": "ЗАПРОСИТЬ у клиента реальный CR лендинга/лид-формы"},
         "qual_share": {"low": 0.5, "mid": 0.6, "high": 0.7, "source": "assumption",
@@ -59,11 +62,41 @@ SCENARIO_PICK = {
 SCENARIO_RU = {"minimal": "Минимальный", "target": "Целевой", "expanded": "Расширенный"}
 
 
+RATE_KEYS = ("ctr", "cr_landing")  # доли конверсии: внутри — доля 0..1
+
+
+def spec_value(key, spec, bound):
+    """Значение метрики во ВНУТРЕННИХ единицах (ctr/cr_landing — доля 0..1).
+
+    VK statistics отдаёт `ctr`/`cr` в ПРОЦЕНТАХ (0.5176 = 0.52 %). Такое значение
+    помечай в forecast_inputs.json как `"unit": "percent"` — здесь оно делится на 100.
+    Если `source` = "api" и `unit` не указан, ctr/cr считаются ПРОЦЕНТАМИ. Явный
+    `"unit": "fraction"` перебивает. Для benchmark/client/assumption без `unit` — доли.
+    """
+    value = spec.get(bound, spec.get("mid"))
+    if value is None:
+        return None
+    unit = spec.get("unit")
+    if unit is None:
+        # статистика VK (source "api") отдаёт ctr/cr в ПРОЦЕНТАХ; benchmark/client/assumption — доли
+        unit = "percent" if (spec.get("source") == "api" and key in RATE_KEYS) else "fraction"
+    if unit not in ("fraction", "percent"):
+        raise ValueError(f"{key}: неизвестный unit {unit!r} (допустимо fraction | percent)")
+    if key in RATE_KEYS:
+        if unit == "percent":
+            value = value / 100
+        if value > 1:
+            raise ValueError(
+                f"{key}={value}: доля больше 100 % невозможна. Если это проценты из статистики VK, "
+                'добавь к метрике "unit": "percent".')
+    return value
+
+
 def m(metrics, key, bound):
     spec = metrics.get(key)
     if not spec:
         return None
-    return spec.get(bound, spec.get("mid"))
+    return spec_value(key, spec, bound)
 
 
 def compute_scenario(name, budget, metrics):
@@ -110,6 +143,14 @@ def reality_checks(scn, cfg):
     if scn["ctr"] and scn["ctr"] > 0.025:
         out.append(f"⚠️ {SCENARIO_RU[scn['name']]}: CTR {scn['ctr']*100:.1f}% оптимистичен для холода "
                    f"(реалистично 0.3–0.8%).")
+    for key, label in (("ctr", "CTR"), ("cr_landing", "CR")):
+        spec = cfg.get("metrics", {}).get(key)
+        if spec and spec.get("source") == "api":
+            v = m(cfg["metrics"], key, SCENARIO_PICK[scn["name"]][key])
+            if v is not None and v < 0.0005:
+                out.append(f"⚠️ {SCENARIO_RU[scn['name']]}: {label} {v*100:.4f}% из api нереально мал — "
+                           f"похоже, {label} уже доля, а не проценты — проверьте unit "
+                           f'(`"unit": "fraction"` для доли, `"percent"` для процентов).')
     if cap and scn["leads"] is not None and scn["leads"] > cap:
         out.append(f"⚠️ {SCENARIO_RU[scn['name']]}: ~{scn['leads']:.0f} лидов > пропускной "
                    f"способности отдела продаж ({cap}).")
@@ -144,7 +185,7 @@ def render(cfg):
             continue
         pct = k in ("ctr", "cr_landing", "qual_share")
         def v(b):
-            x = s.get(b)
+            x = m({k: s}, k, b) if s.get(b) is not None else None
             if x is None:
                 return "—"
             return f"{x*100:.2f}%" if pct else fmt(x)
@@ -189,7 +230,7 @@ def main():
     ap.add_argument("--init", action="store_true", help="создать шаблон forecast_inputs.json")
     args = ap.parse_args()
 
-    ws = Path(args.workspace)
+    ws = resolve_workspace(args.workspace)
     if not ws.exists():
         print(f"ERROR: workspace {ws} не существует", file=sys.stderr)
         return 1

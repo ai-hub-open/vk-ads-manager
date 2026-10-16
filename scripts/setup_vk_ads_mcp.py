@@ -46,8 +46,10 @@ from pathlib import Path
 
 try:
     from scripts._console import setup_console
+    from scripts._workspace import SKILL_ROOT, is_inside_skill
 except ImportError:  # запуск напрямую, не как модуль пакета
     from _console import setup_console
+    from _workspace import SKILL_ROOT, is_inside_skill
 
 try:
     from scripts.credentials import set_api_key
@@ -245,8 +247,28 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     targets = args.target or ["cursor"]
+    # Проектные конфиги пишутся в текущую папку, а `python -m scripts.…` запускают
+    # из папки скилла: токен лёг бы внутрь плагина и уехал бы в архив .skill.
+    in_skill = is_inside_skill(Path.cwd())
     if "all" in targets:
         targets = ["cursor", "claude-code", "claude-desktop"]
+        if in_skill:
+            targets.remove("claude-code")
+            print(
+                "⚠ claude-code пропущен: .mcp.json пишется в текущую папку, а она внутри скилла.\n"
+                f"  Нужен — запусти из папки проекта: python {SKILL_ROOT / 'scripts' / 'setup_vk_ads_mcp.py'} "
+                "--target claude-code …\n"
+            )
+
+    project_targets = [t for t in targets if t in ("cursor-project", "claude-code")]
+    if project_targets and in_skill:
+        print(
+            f"✗ {', '.join(project_targets)}: конфиг пишется в текущую папку, а она внутри скилла "
+            f"({SKILL_ROOT}).\n"
+            "  Запусти из папки проекта пользователя, указав путь к скрипту:\n"
+            f"  python {SKILL_ROOT / 'scripts' / 'setup_vk_ads_mcp.py'} --target {project_targets[0]} …"
+        )
+        return 2
 
     headers: dict = {}
     vk_ads_url = VK_ADS_URL

@@ -191,3 +191,147 @@ def test_missing_local_file_reported_clearly(client, tmp_path):
     from scripts.vk_ads_api import VKAdsError
     with pytest.raises(VKAdsError, match="Не найден файл креатива"):
         client.media.upload_image(tmp_path / "нет.png")
+
+
+# ---------- бюджеты в рублях, защита от больших сумм, CTR в процентах ----------
+
+import argparse
+from scripts import vk_ads_api as api
+
+
+class _FakePlans:
+    def __init__(self):
+        self.updated = None
+
+    def update(self, ad_plan_id, payload):
+        self.updated = (ad_plan_id, payload)
+        return {"id": ad_plan_id}
+
+    def list(self, limit=100):
+        return [{"id": 1, "name": "Тест", "status": "active", "budget_limit_day": 500}]
+
+
+class _FakeClient:
+    def __init__(self):
+        self.ad_plans = _FakePlans()
+
+
+def _ns(**kw):
+    base = dict(dry_run=True, id=7, budget=None, status=None, confirm_activate=False,
+                allow_missing_ord=False, confirm_large_budget=False)
+    base.update(kw)
+    return argparse.Namespace(**base)
+
+
+def _patch_client(monkeypatch):
+    fake = _FakeClient()
+    monkeypatch.setattr(api.VKAdsClient, "from_env", classmethod(lambda cls, dry_run=False: fake))
+    return fake
+
+
+def test_campaign_update_writes_rubles_not_kopecks(monkeypatch):
+    fake = _patch_client(monkeypatch)
+    api.cmd_campaign_update(_ns(budget=500.0))
+    assert fake.ad_plans.updated == (7, {"budget_limit_day": 500})
+
+
+def test_campaign_update_keeps_fractional_ruble(monkeypatch):
+    fake = _patch_client(monkeypatch)
+    api.cmd_campaign_update(_ns(budget=500.5))
+    assert fake.ad_plans.updated[1]["budget_limit_day"] == 500.5
+
+
+def test_campaign_update_refuses_large_daily_budget(monkeypatch):
+    fake = _patch_client(monkeypatch)
+    with pytest.raises(SystemExit) as e:
+        api.cmd_campaign_update(_ns(budget=150000))
+    assert "150 000" in str(e.value) and "--confirm-large-budget" in str(e.value)
+    assert fake.ad_plans.updated is None
+
+
+def test_campaign_update_large_budget_with_flag(monkeypatch):
+    fake = _patch_client(monkeypatch)
+    api.cmd_campaign_update(_ns(budget=150000, confirm_large_budget=True))
+    assert fake.ad_plans.updated[1]["budget_limit_day"] == 150000
+
+
+def test_campaign_update_cli_flag_exists(monkeypatch):
+    fake = _patch_client(monkeypatch)
+    monkeypatch.setattr("sys.argv", ["vk_ads_api.py", "--dry-run", "campaign-update",
+                                     "--id", "7", "--budget", "150000", "--confirm-large-budget"])
+    api.main()
+    assert fake.ad_plans.updated[1]["budget_limit_day"] == 150000
+
+
+def test_check_budget_guard_totals():
+    api.check_budget_guard(total_rub=10_000_000)
+    with pytest.raises(api.BudgetGuardError, match="10 000 001"):
+        api.check_budget_guard(total_rub=10_000_001)
+    api.check_budget_guard(total_rub=10_000_001, confirmed=True)
+
+
+def test_audit_prints_rubles_as_is(monkeypatch, capsys):
+    _patch_client(monkeypatch)
+    api.cmd_audit(argparse.Namespace(dry_run=True, limit=10))
+    assert "500 ₽/день" in capsys.readouterr().out
+
+
+def test_stats_cost_in_rubles_and_ctr_in_percent(monkeypatch, capsys):
+    """cost и ctr из API — рубли и проценты: ни ÷100, ни ×100."""
+    fake = _patch_client(monkeypatch)
+    fake.statistics = type("S", (), {"ad_plans_day": lambda self, ids, a, b: [
+        {"ad_plan_id": 1, "cost": 1234.5, "ctr": 0.5176, "clicks": 608, "impressions": 117469}]})()
+    api.cmd_stats(argparse.Namespace(dry_run=True, ad_plan_id=1, days=7))
+    out = capsys.readouterr().out
+    assert "1234 ₽" in out or "1235 ₽" in out
+    assert "CTR 0.52%" in out
+
+
+# ---------- ревью: согласие пользователя, мусорные суммы, единицы ----------
+
+def test_guard_message_requires_user_consent():
+    with pytest.raises(api.BudgetGuardError) as e:
+        api.check_budget_guard(daily_rub=150000)
+    msg = str(e.value)
+    assert "Назови пользователю сумму в рублях" in msg
+    assert "только после его явного" in msg and "да, сумма верна" in msg
+    assert "повтори с флагом" not in msg
+
+
+def test_guard_compares_rounded_value():
+    api.check_budget_guard(daily_rub=100000.004)          # пишется как 100000 — проходит
+    with pytest.raises(api.BudgetGuardError):
+        api.check_budget_guard(daily_rub=100000.006)      # пишется как 100000.01
+
+
+@pytest.mark.parametrize("bad", ["abc", float("inf"), float("nan"), None, "", -5])
+def test_budget_rub_rejects_garbage(bad):
+    with pytest.raises(api.BudgetGuardError, match="бюджет"):
+        api.budget_rub(bad)
+
+
+def test_guard_rejects_garbage():
+    with pytest.raises(api.BudgetGuardError):
+        api.check_budget_guard(daily_rub=float("nan"))
+
+
+def test_campaign_update_nan_budget_is_clear_refusal(monkeypatch):
+    fake = _patch_client(monkeypatch)
+    with pytest.raises(SystemExit) as e:
+        api.cmd_campaign_update(_ns(budget=float("inf")))
+    assert "бюджет" in str(e.value)
+    assert fake.ad_plans.updated is None
+
+
+def test_kopeck_units_vs_groups():
+    with pytest.raises(api.BudgetGuardError, match="в копейках из версии 0.7.0"):
+        api.check_kopeck_units({"budget_limit_day": 350000}, group_daily=[1000, 2500])
+    api.check_kopeck_units({"budget_limit_day": 3500}, group_daily=[1000, 2500])
+    api.check_kopeck_units({"budget_limit_day": 350000}, group_daily=[])      # нечем сверять
+    api.check_kopeck_units({"budget_limit_day": 350000}, group_daily=[0])
+
+
+def test_kopeck_units_vs_state():
+    with pytest.raises(api.BudgetGuardError, match="в копейках из версии 0.7.0"):
+        api.check_kopeck_units({"budget_limit": 5_000_000}, state={"budget_rub": 50000})
+    api.check_kopeck_units({"budget_limit": 50000}, state={"budget_rub": 50000})

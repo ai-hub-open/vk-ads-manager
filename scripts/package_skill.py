@@ -59,6 +59,7 @@ EXCLUDE_DIRS = {
     "dist",
     ".claude-plugin",  # манифест плагина для Claude Code — в архиве .skill не нужен
     ".github",         # CI репозитория
+    ".cursor",         # проектный конфиг MCP — внутри токен
 }
 EXCLUDE_GLOBS = {"*.pyc", "*.pyo", "*.swp", "*.bak", "*.tmp"}
 # Инструменты сборки и репозиторные файлы: нужны разработчику скилла, внутри
@@ -68,6 +69,7 @@ EXCLUDE_FILES = {
     ".DS_Store", ".gitignore", "Thumbs.db",
     "package.sh", "package.bat", "CHANGELOG.md",
     "pytest.ini", "requirements-dev.txt",
+    ".mcp.json", ".env",  # конфиг MCP и ключи — внутри токены, в архив нельзя
 }
 
 # Только в корне скилла исключаем

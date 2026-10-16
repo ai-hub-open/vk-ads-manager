@@ -85,7 +85,8 @@ def test_template_ships_unverified_so_gate_is_closed():
 # ---------- арифметика сценария ----------
 
 def test_scenario_math():
-    metrics = {k: {"low": v, "mid": v, "high": v, "source": "api"} for k, v in
+    metrics = {k: {"low": v, "mid": v, "high": v, "source": "api",
+                   **({"unit": "fraction"} if k in ("ctr", "cr_landing") else {})} for k, v in
                {"cpm": 200, "ctr": 0.01, "cr_landing": 0.05, "qual_share": 0.5}.items()}
     scn = fc.compute_scenario("target", 40000, metrics)
 
@@ -98,7 +99,8 @@ def test_scenario_math():
 
 def test_scenario_without_cr_gives_no_leads():
     """Нет CR — лидов не выдумываем, CPL остаётся пустым."""
-    metrics = {"cpm": {"mid": 200, "source": "api"}, "ctr": {"mid": 0.01, "source": "api"}}
+    metrics = {"cpm": {"mid": 200, "source": "api"},
+               "ctr": {"mid": 0.01, "source": "api", "unit": "fraction"}}
     scn = fc.compute_scenario("target", 40000, metrics)
     assert scn["requests"] is None
     assert scn["leads"] is None
@@ -155,3 +157,99 @@ def test_init_then_run_writes_forecast(tmp_path, capsys):
     report = (ws / "_forecast.md").read_text(encoding="utf-8")
     assert "ТРЕБУЕТ СОГЛАСОВАНИЯ" in capsys.readouterr().out
     assert report.strip()
+
+
+# ---------- единицы: ctr/cr из статистики VK приходят в ПРОЦЕНТАХ ----------
+
+def test_api_percent_converted_to_fraction():
+    """ctr 0.5176 (= 0.52 %) из VK statistics -> доля 0.005176."""
+    spec = {"low": 0.4, "mid": 0.5176, "high": 0.7, "source": "api", "unit": "percent"}
+    assert fc.m({"ctr": spec}, "ctr", "mid") == pytest.approx(0.005176)
+
+
+def test_percent_unit_flows_into_scenario():
+    metrics = {"cpm": {"mid": 200, "source": "api"},
+               "ctr": {"mid": 1.0, "source": "api", "unit": "percent"}}
+    scn = fc.compute_scenario("target", 40000, metrics)
+    assert scn["ctr"] == pytest.approx(0.01)
+    assert scn["clicks"] == pytest.approx(2000)
+
+
+def test_benchmark_stays_fraction():
+    spec = fc.TEMPLATE["metrics"]["ctr"]
+    assert fc.m({"ctr": spec}, "ctr", "mid") == pytest.approx(0.006)
+
+
+def test_cr_percent_converted():
+    spec = {"mid": 2.5, "source": "client", "unit": "percent"}
+    assert fc.m({"cr_landing": spec}, "cr_landing", "mid") == pytest.approx(0.025)
+
+
+def test_unknown_unit_rejected():
+    with pytest.raises(ValueError, match="unit"):
+        fc.m({"ctr": {"mid": 1, "unit": "bananas"}}, "ctr", "mid")
+
+
+def test_api_source_defaults_to_percent():
+    assert fc.m({"ctr": {"mid": 0.5176, "source": "api"}}, "ctr", "mid") == pytest.approx(0.005176)
+    assert fc.m({"cr_landing": {"mid": 2, "source": "api"}}, "cr_landing", "mid") == pytest.approx(0.02)
+
+
+def test_explicit_fraction_beats_api_default():
+    spec = {"mid": 0.01, "source": "api", "unit": "fraction"}
+    assert fc.m({"ctr": spec}, "ctr", "mid") == pytest.approx(0.01)
+
+
+def test_client_and_benchmark_default_to_fraction():
+    assert fc.m({"ctr": {"mid": 0.02, "source": "client"}}, "ctr", "mid") == pytest.approx(0.02)
+    assert fc.m({"cr_landing": {"mid": 0.02, "source": "benchmark"}}, "cr_landing", "mid") == pytest.approx(0.02)
+
+
+def test_api_cpm_and_qual_share_not_scaled():
+    assert fc.m({"cpm": {"mid": 200, "source": "api"}}, "cpm", "mid") == 200
+    assert fc.m({"qual_share": {"mid": 0.6, "source": "api"}}, "qual_share", "mid") == 0.6
+
+
+def test_fraction_above_one_rejected():
+    """CTR/CR > 100 % как доля невозможен — скорее всего процент забыли пометить."""
+    with pytest.raises(ValueError, match="percent"):
+        fc.m({"ctr": {"mid": 1.5, "source": "client"}}, "ctr", "mid")
+
+
+def test_render_shows_percent_input_correctly():
+    cfg = {"product": "X", "budgets": {"target": 40000},
+           "metrics": {"cpm": {"low": 200, "mid": 200, "high": 200, "source": "api"},
+                       "ctr": {"low": 0.5, "mid": 0.5, "high": 0.5, "source": "api", "unit": "percent"}}}
+    report = fc.render(cfg)
+    assert "0.50%" in report
+
+
+# ---------- ревью: подозрительно малый CTR из api ----------
+
+def _api_cfg(ctr, unit=None):
+    spec = {"low": ctr, "mid": ctr, "high": ctr, "source": "api"}
+    if unit:
+        spec["unit"] = unit
+    return {"product": "X", "budgets": {"target": 40000},
+            "metrics": {"cpm": {"mid": 200, "source": "api"}, "ctr": spec}}
+
+
+def test_warns_when_api_ctr_looks_like_fraction_read_as_percent():
+    """0.006 из api без unit -> прочитано как 0.006 % = 0.00006: скорее всего это уже доля."""
+    cfg = _api_cfg(0.006)
+    scn = fc.compute_scenario("target", 40000, cfg["metrics"])
+    checks = fc.reality_checks(scn, cfg)
+    assert any("CTR уже доля, а не проценты" in c and "unit" in c for c in checks)
+
+
+def test_no_warning_for_normal_api_ctr():
+    cfg = _api_cfg(0.52)
+    scn = fc.compute_scenario("target", 40000, cfg["metrics"])
+    assert not any("уже доля" in c for c in fc.reality_checks(scn, cfg))
+
+
+def test_no_warning_for_benchmark_small_ctr():
+    cfg = _api_cfg(0.0004)
+    cfg["metrics"]["ctr"]["source"] = "benchmark"
+    scn = fc.compute_scenario("target", 40000, cfg["metrics"])
+    assert not any("уже доля" in c for c in fc.reality_checks(scn, cfg))
