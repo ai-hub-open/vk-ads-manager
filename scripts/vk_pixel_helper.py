@@ -18,8 +18,10 @@ from pathlib import Path
 
 try:
     from scripts._console import setup_console
+    from scripts._workspace import resolve_workspace
 except ImportError:  # запуск напрямую, не как модуль пакета
     from _console import setup_console
+    from _workspace import resolve_workspace
 
 
 PIXEL_TEMPLATE = """<!-- Top.Mail.Ru / VK Ads pixel -->
@@ -212,7 +214,7 @@ def main():
     parser.add_argument("--workspace", required=True, help="Папка vk-campaign-<slug>/")
     args = parser.parse_args()
 
-    workspace = Path(args.workspace)
+    workspace = resolve_workspace(args.workspace)
     workspace.mkdir(parents=True, exist_ok=True)
 
     # 1. Pixel snippet

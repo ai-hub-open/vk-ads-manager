@@ -24,8 +24,10 @@ from pathlib import Path
 
 try:
     from scripts._console import setup_console
+    from scripts._workspace import resolve_workspace
 except ImportError:  # запуск напрямую, не как модуль пакета
     from _console import setup_console
+    from _workspace import resolve_workspace
 
 VERIFIED = {"api", "client"}  # источники, которым можно доверять для лидов/CPL
 
@@ -189,7 +191,7 @@ def main():
     ap.add_argument("--init", action="store_true", help="создать шаблон forecast_inputs.json")
     args = ap.parse_args()
 
-    ws = Path(args.workspace)
+    ws = resolve_workspace(args.workspace)
     if not ws.exists():
         print(f"ERROR: workspace {ws} не существует", file=sys.stderr)
         return 1

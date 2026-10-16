@@ -62,8 +62,10 @@ import requests
 
 try:
     from scripts._console import setup_console
+    from scripts._workspace import resolve_workspace
 except ImportError:  # запуск напрямую, не как модуль пакета
     from _console import setup_console
+    from _workspace import resolve_workspace
 
 try:
     from scripts.credentials import CredentialNotFound, load_api_key
@@ -197,7 +199,7 @@ def main(argv: list[str] | None = None) -> int:
         print("ERROR: нужен --workspace или --files.", file=sys.stderr)
         return 2
 
-    ws = Path(args.workspace) if args.workspace else Path.cwd()
+    ws = resolve_workspace(args.workspace or Path.cwd())
     images = collect_images(ws, args.files)
 
     if not images:

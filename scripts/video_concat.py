@@ -36,8 +36,10 @@ from typing import List, Optional
 
 try:
     from scripts._console import setup_console
+    from scripts._workspace import resolve_workspace
 except ImportError:  # запуск напрямую, не как модуль пакета
     from _console import setup_console
+    from _workspace import resolve_workspace
 
 
 class FFmpegError(Exception):
@@ -259,7 +261,7 @@ def cmd_check(args):
 
 def cmd_concat(args):
     try:
-        out = concat_videos([Path(p) for p in args.input], Path(args.output), method=args.method)
+        out = concat_videos([Path(p) for p in args.input], resolve_workspace(args.output, what="Файл результата"), method=args.method)
         print(f"✓ {out} (склеено {len(args.input)} сегментов)")
         return 0
     except FFmpegError as e:
@@ -269,7 +271,7 @@ def cmd_concat(args):
 
 def cmd_last_frame(args):
     try:
-        out = extract_last_frame(Path(args.input), Path(args.output))
+        out = extract_last_frame(Path(args.input), resolve_workspace(args.output, what="Файл результата"))
         print(f"✓ Последний кадр сохранён: {out}")
         return 0
     except FFmpegError as e:
@@ -280,7 +282,7 @@ def cmd_last_frame(args):
 def cmd_overlay(args):
     try:
         out = overlay_text(
-            Path(args.input), Path(args.output),
+            Path(args.input), resolve_workspace(args.output, what="Файл результата"),
             text=args.text, position=args.position,
             font_size=args.font_size,
         )
