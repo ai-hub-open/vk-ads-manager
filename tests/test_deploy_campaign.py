@@ -298,6 +298,35 @@ def test_no_deprecated_utcnow_left():
     assert "utcnow()" not in src.replace("`datetime.utcnow()`", "")
 
 
+# ---------- старые бюджеты в копейках (0.7.0) ----------
+
+@pytest.mark.parametrize("camp_key, state_key", [("budget_limit", "budget_rub"),
+                                                 ("budget_limit_day", "daily_budget_rub")])
+def test_refuses_kopeck_budget_vs_state(tmp_path, _media, camp_key, state_key):
+    creatives = {"campaign": {"name": "Т", "objective": "leadads", camp_key: 5_000_000},
+                 "creatives": DEFAULT_CREATIVES["creatives"]}
+    ws = _workspace(tmp_path, creatives=creatives, audiences=DEFAULT_AUDIENCES)
+    (ws / "_state.json").write_text(json.dumps({state_key: 50000 if camp_key == "budget_limit" else 3500}),
+                                    encoding="utf-8")
+    if camp_key == "budget_limit_day":
+        (ws / "_state.json").write_text(json.dumps({state_key: 50}), encoding="utf-8")
+    with pytest.raises(dc.DeployPlanError, match="в копейках из версии 0.7.0"):
+        dc.deploy(ws, dry_run=True, skip_media=True)
+
+
+def test_equal_or_close_budget_vs_state_passes(tmp_path, _media):
+    ws = _workspace(tmp_path, creatives=DEFAULT_CREATIVES, audiences=DEFAULT_AUDIENCES)
+    (ws / "_state.json").write_text(json.dumps({"budget_rub": 60000}), encoding="utf-8")
+    assert dc.deploy(ws, dry_run=True, skip_media=True)["ad_plan"]
+
+
+def test_kopeck_check_skipped_without_state(tmp_path, _media):
+    creatives = {"campaign": {"name": "Т", "objective": "leadads", "budget_limit": 6_000_000},
+                 "creatives": DEFAULT_CREATIVES["creatives"]}
+    ws = _workspace(tmp_path, creatives=creatives, audiences=DEFAULT_AUDIENCES)
+    assert dc.deploy(ws, dry_run=True, skip_media=True)["ad_plan"]
+
+
 # ---------- защита от больших бюджетов ----------
 
 def _big(tmp_path, *, daily=500, total=60000):

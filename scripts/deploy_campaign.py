@@ -91,6 +91,22 @@ def load_audiences(workspace: Path) -> list:
     return data
 
 
+def check_old_kopeck_budgets(workspace: Path) -> None:
+    """creatives.json[campaign] с бюджетом ≥ 100× от _state.json — это копейки из 0.7.0."""
+    data = load_json(workspace / "creatives.json", default={})
+    state = load_json(workspace / "_state.json", default={}) or {}
+    if not (isinstance(data, dict) and isinstance(data.get("campaign"), dict)):
+        return
+    camp = data["campaign"]
+    for key, state_key in (("budget_limit", "budget_rub"), ("budget_limit_day", "daily_budget_rub")):
+        val, ref = camp.get(key), state.get(state_key)
+        if val and ref and float(val) >= 100 * float(ref):
+            raise DeployPlanError(
+                f"{key}={val} в creatives.json в {float(val) / float(ref):.0f} раз больше "
+                f"{state_key}={ref} из _state.json: похоже, бюджет в копейках из версии 0.7.0 — "
+                "укажите в рублях (API принимает рубли).")
+
+
 def load_ad_plan_config(workspace: Path) -> dict:
     """Конфиг КАМПАНИИ (ad_plan): цель + общий бюджет. Из creatives.json[campaign] или _state.json."""
     creatives_data = load_json(workspace / "creatives.json", default={})
@@ -309,6 +325,7 @@ def deploy(workspace: Path, dry_run: bool, skip_media: bool,
            confirm_large_budget: bool = False) -> dict:
     creatives = load_creatives(workspace)
     audiences = load_audiences(workspace)
+    check_old_kopeck_budgets(workspace)
     ad_plan_cfg = load_ad_plan_config(workspace)
 
     if not creatives:

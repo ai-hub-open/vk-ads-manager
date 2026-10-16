@@ -45,7 +45,7 @@ TEMPLATE = {
                 "note": "ЗАМЕНИТЬ на CPM из vk_ads_statistics_summary похожей кампании"},
         "ctr": {"low": 0.004, "mid": 0.006, "high": 0.009, "source": "benchmark",
                 "note": "холодная лента VK; ДОЛИ (0.006 = 0.6 %). Если берёшь ctr из vk_ads_statistics_* "
-                        "(там ПРОЦЕНТЫ), добавь \"unit\": \"percent\" и source \"api\""},
+                        "(там ПРОЦЕНТЫ), ставь source \"api\" — проценты поймёт скрипт (явно: \"unit\": \"percent\")"},
         "cr_landing": {"low": 0.01, "mid": 0.02, "high": 0.04, "source": "assumption",
                        "note": "ЗАПРОСИТЬ у клиента реальный CR лендинга/лид-формы"},
         "qual_share": {"low": 0.5, "mid": 0.6, "high": 0.7, "source": "assumption",
@@ -70,12 +70,16 @@ def spec_value(key, spec, bound):
 
     VK statistics отдаёт `ctr`/`cr` в ПРОЦЕНТАХ (0.5176 = 0.52 %). Такое значение
     помечай в forecast_inputs.json как `"unit": "percent"` — здесь оно делится на 100.
-    Без `unit` (или `"unit": "fraction"`) число считается долей — так заданы benchmark'и.
+    Если `source` = "api" и `unit` не указан, ctr/cr считаются ПРОЦЕНТАМИ. Явный
+    `"unit": "fraction"` перебивает. Для benchmark/client/assumption без `unit` — доли.
     """
     value = spec.get(bound, spec.get("mid"))
     if value is None:
         return None
-    unit = spec.get("unit", "fraction")
+    unit = spec.get("unit")
+    if unit is None:
+        # статистика VK (source "api") отдаёт ctr/cr в ПРОЦЕНТАХ; benchmark/client/assumption — доли
+        unit = "percent" if (spec.get("source") == "api" and key in RATE_KEYS) else "fraction"
     if unit not in ("fraction", "percent"):
         raise ValueError(f"{key}: неизвестный unit {unit!r} (допустимо fraction | percent)")
     if key in RATE_KEYS:

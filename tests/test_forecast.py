@@ -85,7 +85,8 @@ def test_template_ships_unverified_so_gate_is_closed():
 # ---------- арифметика сценария ----------
 
 def test_scenario_math():
-    metrics = {k: {"low": v, "mid": v, "high": v, "source": "api"} for k, v in
+    metrics = {k: {"low": v, "mid": v, "high": v, "source": "api",
+                   **({"unit": "fraction"} if k in ("ctr", "cr_landing") else {})} for k, v in
                {"cpm": 200, "ctr": 0.01, "cr_landing": 0.05, "qual_share": 0.5}.items()}
     scn = fc.compute_scenario("target", 40000, metrics)
 
@@ -98,7 +99,8 @@ def test_scenario_math():
 
 def test_scenario_without_cr_gives_no_leads():
     """Нет CR — лидов не выдумываем, CPL остаётся пустым."""
-    metrics = {"cpm": {"mid": 200, "source": "api"}, "ctr": {"mid": 0.01, "source": "api"}}
+    metrics = {"cpm": {"mid": 200, "source": "api"},
+               "ctr": {"mid": 0.01, "source": "api", "unit": "fraction"}}
     scn = fc.compute_scenario("target", 40000, metrics)
     assert scn["requests"] is None
     assert scn["leads"] is None
@@ -188,10 +190,30 @@ def test_unknown_unit_rejected():
         fc.m({"ctr": {"mid": 1, "unit": "bananas"}}, "ctr", "mid")
 
 
+def test_api_source_defaults_to_percent():
+    assert fc.m({"ctr": {"mid": 0.5176, "source": "api"}}, "ctr", "mid") == pytest.approx(0.005176)
+    assert fc.m({"cr_landing": {"mid": 2, "source": "api"}}, "cr_landing", "mid") == pytest.approx(0.02)
+
+
+def test_explicit_fraction_beats_api_default():
+    spec = {"mid": 0.01, "source": "api", "unit": "fraction"}
+    assert fc.m({"ctr": spec}, "ctr", "mid") == pytest.approx(0.01)
+
+
+def test_client_and_benchmark_default_to_fraction():
+    assert fc.m({"ctr": {"mid": 0.02, "source": "client"}}, "ctr", "mid") == pytest.approx(0.02)
+    assert fc.m({"cr_landing": {"mid": 0.02, "source": "benchmark"}}, "cr_landing", "mid") == pytest.approx(0.02)
+
+
+def test_api_cpm_and_qual_share_not_scaled():
+    assert fc.m({"cpm": {"mid": 200, "source": "api"}}, "cpm", "mid") == 200
+    assert fc.m({"qual_share": {"mid": 0.6, "source": "api"}}, "qual_share", "mid") == 0.6
+
+
 def test_fraction_above_one_rejected():
     """CTR/CR > 100 % как доля невозможен — скорее всего процент забыли пометить."""
     with pytest.raises(ValueError, match="percent"):
-        fc.m({"ctr": {"mid": 1.5, "source": "api"}}, "ctr", "mid")
+        fc.m({"ctr": {"mid": 1.5, "source": "client"}}, "ctr", "mid")
 
 
 def test_render_shows_percent_input_correctly():
