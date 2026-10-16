@@ -44,7 +44,8 @@ TEMPLATE = {
         "cpm": {"low": 150, "mid": 200, "high": 280, "source": "benchmark",
                 "note": "ЗАМЕНИТЬ на CPM из vk_ads_statistics_summary похожей кампании"},
         "ctr": {"low": 0.004, "mid": 0.006, "high": 0.009, "source": "benchmark",
-                "note": "холодная лента VK; api если есть статистика"},
+                "note": "холодная лента VK; ДОЛИ (0.006 = 0.6 %). Если берёшь ctr из vk_ads_statistics_* "
+                        "(там ПРОЦЕНТЫ), добавь \"unit\": \"percent\" и source \"api\""},
         "cr_landing": {"low": 0.01, "mid": 0.02, "high": 0.04, "source": "assumption",
                        "note": "ЗАПРОСИТЬ у клиента реальный CR лендинга/лид-формы"},
         "qual_share": {"low": 0.5, "mid": 0.6, "high": 0.7, "source": "assumption",
@@ -61,11 +62,37 @@ SCENARIO_PICK = {
 SCENARIO_RU = {"minimal": "Минимальный", "target": "Целевой", "expanded": "Расширенный"}
 
 
+RATE_KEYS = ("ctr", "cr_landing")  # доли конверсии: внутри — доля 0..1
+
+
+def spec_value(key, spec, bound):
+    """Значение метрики во ВНУТРЕННИХ единицах (ctr/cr_landing — доля 0..1).
+
+    VK statistics отдаёт `ctr`/`cr` в ПРОЦЕНТАХ (0.5176 = 0.52 %). Такое значение
+    помечай в forecast_inputs.json как `"unit": "percent"` — здесь оно делится на 100.
+    Без `unit` (или `"unit": "fraction"`) число считается долей — так заданы benchmark'и.
+    """
+    value = spec.get(bound, spec.get("mid"))
+    if value is None:
+        return None
+    unit = spec.get("unit", "fraction")
+    if unit not in ("fraction", "percent"):
+        raise ValueError(f"{key}: неизвестный unit {unit!r} (допустимо fraction | percent)")
+    if key in RATE_KEYS:
+        if unit == "percent":
+            value = value / 100
+        if value > 1:
+            raise ValueError(
+                f"{key}={value}: доля больше 100 % невозможна. Если это проценты из статистики VK, "
+                'добавь к метрике "unit": "percent".')
+    return value
+
+
 def m(metrics, key, bound):
     spec = metrics.get(key)
     if not spec:
         return None
-    return spec.get(bound, spec.get("mid"))
+    return spec_value(key, spec, bound)
 
 
 def compute_scenario(name, budget, metrics):
@@ -146,7 +173,7 @@ def render(cfg):
             continue
         pct = k in ("ctr", "cr_landing", "qual_share")
         def v(b):
-            x = s.get(b)
+            x = m({k: s}, k, b) if s.get(b) is not None else None
             if x is None:
                 return "—"
             return f"{x*100:.2f}%" if pct else fmt(x)

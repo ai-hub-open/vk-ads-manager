@@ -155,3 +155,48 @@ def test_init_then_run_writes_forecast(tmp_path, capsys):
     report = (ws / "_forecast.md").read_text(encoding="utf-8")
     assert "ТРЕБУЕТ СОГЛАСОВАНИЯ" in capsys.readouterr().out
     assert report.strip()
+
+
+# ---------- единицы: ctr/cr из статистики VK приходят в ПРОЦЕНТАХ ----------
+
+def test_api_percent_converted_to_fraction():
+    """ctr 0.5176 (= 0.52 %) из VK statistics -> доля 0.005176."""
+    spec = {"low": 0.4, "mid": 0.5176, "high": 0.7, "source": "api", "unit": "percent"}
+    assert fc.m({"ctr": spec}, "ctr", "mid") == pytest.approx(0.005176)
+
+
+def test_percent_unit_flows_into_scenario():
+    metrics = {"cpm": {"mid": 200, "source": "api"},
+               "ctr": {"mid": 1.0, "source": "api", "unit": "percent"}}
+    scn = fc.compute_scenario("target", 40000, metrics)
+    assert scn["ctr"] == pytest.approx(0.01)
+    assert scn["clicks"] == pytest.approx(2000)
+
+
+def test_benchmark_stays_fraction():
+    spec = fc.TEMPLATE["metrics"]["ctr"]
+    assert fc.m({"ctr": spec}, "ctr", "mid") == pytest.approx(0.006)
+
+
+def test_cr_percent_converted():
+    spec = {"mid": 2.5, "source": "client", "unit": "percent"}
+    assert fc.m({"cr_landing": spec}, "cr_landing", "mid") == pytest.approx(0.025)
+
+
+def test_unknown_unit_rejected():
+    with pytest.raises(ValueError, match="unit"):
+        fc.m({"ctr": {"mid": 1, "unit": "bananas"}}, "ctr", "mid")
+
+
+def test_fraction_above_one_rejected():
+    """CTR/CR > 100 % как доля невозможен — скорее всего процент забыли пометить."""
+    with pytest.raises(ValueError, match="percent"):
+        fc.m({"ctr": {"mid": 1.5, "source": "api"}}, "ctr", "mid")
+
+
+def test_render_shows_percent_input_correctly():
+    cfg = {"product": "X", "budgets": {"target": 40000},
+           "metrics": {"cpm": {"low": 200, "mid": 200, "high": 200, "source": "api"},
+                       "ctr": {"low": 0.5, "mid": 0.5, "high": 0.5, "source": "api", "unit": "percent"}}}
+    report = fc.render(cfg)
+    assert "0.50%" in report

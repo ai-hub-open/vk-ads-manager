@@ -82,13 +82,13 @@ grant_type=client_credentials&client_id={ID}&client_secret={SECRET}
   "name": "AiSMM — SMM-фрилансеры — конверсии",
   "status": "blocked|active|deleted",
   "objective": "leads|conversions|traffic|reach|video_views|...",
-  "budget_limit": 5000000,
-  "budget_limit_day": 500000,
+  "budget_limit": 50000,
+  "budget_limit_day": 5000,
   "bid_strategy": "minimal_price|max_price",
   "max_price": null
 }
 ```
-(Суммы — в копейках. `objective` и общий бюджет живут на уровне Кампании.)
+(Суммы — в **рублях**: `500` = 500 ₽. `objective` и общий бюджет живут на уровне Кампании.)
 
 ### Группы объявлений — `/campaigns` (UI «Группа»)
 Ребёнок Кампании — обязателен `ad_plan_id`, иначе orphan.
@@ -105,7 +105,7 @@ grant_type=client_credentials&client_id={ID}&client_secret={SECRET}
   "ad_plan_id": 12345,
   "name": "H1 — LAL 1% от платных",
   "status": "blocked|active",
-  "budget_limit_day": 200000,
+  "budget_limit_day": 2000,
   "targetings": {
     "age": [25, 45],
     "sex": [1, 2],
@@ -165,7 +165,7 @@ grant_type=client_credentials&client_id={ID}&client_secret={SECRET}
 - `GET /statistics/banners/{ids}/day.json?...`
 - `GET /statistics/{entity}/summary.json?...`
 
-Метрики: `impressions`, `clicks`, `ctr`, `cpc`, `cost` (в копейках!), `goals` (события пикселя), `cpa`, `video_views`.
+Метрики: `impressions`, `clicks`, `ctr`, `cpc`, `cost`/`spent` (рубли), `goals` (события пикселя), `cpa`, `video_views`.
 
 ### Файлы (`/content`)
 - `POST /content/static.json` — загрузка изображения → возвращает `id` для `banners.images`.
@@ -196,14 +196,14 @@ API нет, сохраняй возвращённые `id`.
    ```http
    POST /ad_plans.json
    {"name":"…","objective":"conversions","status":"blocked",
-    "budget_limit":5000000,"budget_limit_day":500000,"bid_strategy":"minimal_price"}
+    "budget_limit":50000,"budget_limit_day":5000,"bid_strategy":"minimal_price"}
    ```
 
 3. **Группы (campaigns)** — по одной на ячейку матрицы, с `ad_plan_id`, status=blocked:
    ```http
    POST /campaigns.json
    {"ad_plan_id":12345,"name":"H1 — LAL 1%","status":"blocked",
-    "budget_limit_day":200000,
+    "budget_limit_day":2000,
     "targetings":{"lookalike_audience_ids":[54321],"age":[25,45],"sex":[1,2],"geo":{"regions":[1]}},
     "placements":["vk_feed","vk_clips"]}
    ```
@@ -256,7 +256,7 @@ client.create_campaign_tree(ad_plan_payload, [
 
 ## Особенности и подводные камни
 
-1. **Деньги в копейках.** 5000 ₽ = 500000. `cost` в статистике тоже в копейках.
+1. **Деньги в рублях.** 5000 ₽ = `5000` (подтверждено вживую 16.10.2026: запись `50000` = «50 000 ₽» в кабинете). Не умножай на 100. `spent`/`cpm`/`cpc`/`cpa` в статистике — тоже рубли (строки), а `ctr`/`cr` — **проценты** (`0.5176` = 0.52 %). Скрипты отказываются писать дневной бюджет > 100 000 ₽ и общий > 10 000 000 ₽ без `--confirm-large-budget`.
 2. **Время в UTC.** Учитывать +3 часа для отчётов по МСК.
 3. **Статусы.** API: `blocked` (пауза), `deleted` (мягкое удаление). Жёстко удалить по API нельзя. В UI статусов больше (general/start/campaign_status) — «На модерации», «Отклонена», «Приостановлена по дневному лимиту», «Баланс исчерпан», «Архив». При мониторинге различать причину простоя.
 4. **Модерация + ОРД.** После создания объявление идёт на модерацию (`moderating` → `accepted`/`rejected`) и на ОРД (статус «Ожидание» до 10 дней → «Принято» с ERID / «Отклонено»). Запуск считать завершённым после присвоения ERID.
@@ -284,7 +284,7 @@ print(client.probe_schema())
 
 # Создание всего дерева сразу (всё в blocked)
 tree = client.create_campaign_tree(
-    {"name": "Тест", "objective": "leads", "budget_limit_day": 400000, "bid_strategy": "minimal_price"},
+    {"name": "Тест", "objective": "leads", "budget_limit_day": 4000, "bid_strategy": "minimal_price"},
     [{"payload": {"name": "H1", "targetings": {...}, "placements": ["vk_feed"]},
       "banners": [{"format": "universal", "title": "…", "url": "…", "company_info": "ИП …, ИНН …", "images": [{"id": 1}]}]}],
 )

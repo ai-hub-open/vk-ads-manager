@@ -56,8 +56,8 @@ def load_campaign_config(workspace: Path) -> dict:
     state = load_json(workspace / "_state.json", default={})
     return {
         "name": f"{state.get('brand_name_ru', 'Campaign')} — VK тест",
-        "budget_limit": state.get("budget_rub", 50000) * 100,
-        "budget_limit_day": state.get("daily_budget_rub", 3500) * 100,
+        "budget_limit": state.get("budget_rub", 50000),
+        "budget_limit_day": state.get("daily_budget_rub", 3500),
         "objective": "conversions",
         "bid_strategy": "minimal_price",
     }
@@ -70,8 +70,9 @@ def load_audiences(workspace: Path) -> list:
     return data
 
 
-def kop_to_rub(k: int) -> int:
-    return int(k / 100)
+def rub_int(value) -> int:
+    """Бюджеты в campaign-конфиге — рубли (как в API); для показа округляем до целых."""
+    return int(round(float(value)))
 
 
 def _ru_format_objective(obj: str) -> str:
@@ -259,8 +260,8 @@ def build_guide(workspace: Path) -> str:
     lines.append(f"- Название: `{campaign.get('name', '')}`")
     lines.append(f"- Цель: **{_ru_format_objective(campaign.get('objective', 'conversions'))}**")
     lines.append(f"- Стратегия ставок: **{_ru_format_strategy(campaign.get('bid_strategy', 'minimal_price'))}**")
-    lines.append(f"- Общий бюджет: **{kop_to_rub(campaign.get('budget_limit', 5000000))} ₽**")
-    lines.append(f"- Дневной бюджет: **{kop_to_rub(campaign.get('budget_limit_day', 350000))} ₽**")
+    lines.append(f"- Общий бюджет: **{rub_int(campaign.get('budget_limit', 50000))} ₽**")
+    lines.append(f"- Дневной бюджет: **{rub_int(campaign.get('budget_limit_day', 3500))} ₽**")
     lines.append(f"- Срок: {state.get('test_period_days', 14)} дней")
     lines.append(f"- **Статус при создании:** «На паузе» — НЕ запускайте сразу, сначала добавьте группы и баннеры!")
     lines.append("")

@@ -6,7 +6,8 @@
 * всё создаётся в `status: "blocked"` — активирует только маркетолог руками;
 * каждая группа получает `ad_plan_id`, иначе становится orphan и невидима в
   новом кабинете ads.vk.ru;
-* бюджеты уходят в API в копейках;
+* бюджеты уходят в API в рублях (НЕ в копейках — 0.7.0 завышал в 100 раз);
+* бюджет выше порога не уходит без `--confirm-large-budget`;
 * объявления создаются вложенными в группу — отдельного `POST /banners` в API нет.
 
 Сеть закрыта: conftest запрещает `socket.connect`, а клиент поднимается с
@@ -23,19 +24,22 @@ from scripts import deploy_campaign as dc
 from scripts.vk_ads_api import MediaAPI
 
 
-# ---------- рубли → копейки ----------
+# ---------- рубли: API принимает budget_limit* в рублях ----------
 
-@pytest.mark.parametrize("rub, kopecks", [
-    (60000, 6000000),
-    (500, 50000),
+@pytest.mark.parametrize("rub, expected", [
+    (60000, 60000),
+    (500, 500),
     (0, 0),
-    (1234.56, 123456),
-    (0.01, 1),
-    (99.995, 10000),   # округление, а не усечение
+    (500.0, 500),          # целые рубли остаются int
+    (1234.56, 1234.56),    # дробные — до 2 знаков
+    (99.999, 100),         # округление до копеек, затем в целое
 ])
-def test_rub_to_kopecks(rub, kopecks):
-    assert dc.rub_to_kopecks(rub) == kopecks
-    assert isinstance(dc.rub_to_kopecks(rub), int)
+def test_budget_rub(rub, expected):
+    assert dc.budget_rub(rub) == expected
+
+
+def test_no_kopecks_helper_left():
+    assert not hasattr(dc, "rub_to_kopecks"), "рубли в копейки больше не переводятся"
 
 
 # ---------- гео и сообщества ----------
@@ -104,7 +108,7 @@ def _workspace(tmp_path: Path, *, creatives=None, audiences=None) -> Path:
 
 
 DEFAULT_CREATIVES = {
-    "campaign": {"name": "Тест", "objective": "leadads", "budget_limit": 6000000},
+    "campaign": {"name": "Тест", "objective": "leadads", "budget_limit": 60000},
     "creatives": [
         {"name": "cr1", "title": "Заголовок", "description": "Описание",
          "url": "https://example.com", "audience": "H1", "image_url": "https://example.com/a.png"},
@@ -139,8 +143,8 @@ def test_dry_run_never_sets_active(tmp_path, _media):
     assert '"active"' not in json.dumps(plan, ensure_ascii=False)
 
 
-def test_group_daily_budget_in_kopecks(tmp_path, _media, monkeypatch):
-    """Дневной бюджет группы уходит в API в копейках: 500 ₽ → 50000."""
+def test_group_daily_budget_in_rubles(tmp_path, _media, monkeypatch):
+    """Дневной бюджет группы уходит в API в рублях: 500 ₽ → 500."""
     captured = {}
     real_tree = dc.VKAdsClient.create_campaign_tree
 
@@ -153,7 +157,7 @@ def test_group_daily_budget_in_kopecks(tmp_path, _media, monkeypatch):
     ws = _workspace(tmp_path, creatives=DEFAULT_CREATIVES, audiences=DEFAULT_AUDIENCES)
     dc.deploy(ws, dry_run=True, skip_media=True)
 
-    assert captured["groups"][0]["payload"]["budget_limit_day"] == 50000
+    assert captured["groups"][0]["payload"]["budget_limit_day"] == 500
 
 
 def test_banners_nested_in_group(tmp_path, _media):
@@ -195,7 +199,7 @@ def test_ad_plan_config_defaults_to_blocked(tmp_path):
     assert dc.load_ad_plan_config(ws)["status"] == "blocked"
 
 
-def test_ad_plan_config_from_state_converts_budget(tmp_path):
+def test_ad_plan_config_from_state_keeps_rubles(tmp_path):
     ws = tmp_path / "ws"
     ws.mkdir()
     (ws / "_state.json").write_text(
@@ -204,8 +208,8 @@ def test_ad_plan_config_from_state_converts_budget(tmp_path):
     )
     cfg = dc.load_ad_plan_config(ws)
     assert cfg["status"] == "blocked"
-    assert cfg["budget_limit"] == 4000000
-    assert cfg["budget_limit_day"] == 200000
+    assert cfg["budget_limit"] == 40000
+    assert cfg["budget_limit_day"] == 2000
 
 
 # ---------- источник медиа: ссылка или локальный файл ----------
@@ -292,3 +296,65 @@ def test_timestamps_carry_offset(tmp_path, _media):
 def test_no_deprecated_utcnow_left():
     src = (Path(dc.__file__)).read_text(encoding="utf-8")
     assert "utcnow()" not in src.replace("`datetime.utcnow()`", "")
+
+
+# ---------- защита от больших бюджетов ----------
+
+def _big(tmp_path, *, daily=500, total=60000):
+    creatives = {
+        "campaign": {"name": "Тест", "objective": "leadads", "budget_limit": total},
+        "creatives": DEFAULT_CREATIVES["creatives"],
+    }
+    auds = [{**DEFAULT_AUDIENCES[0], "daily_budget_rub": daily}]
+    return _workspace(tmp_path, creatives=creatives, audiences=auds)
+
+
+def test_guard_refuses_large_daily_budget(tmp_path, _media):
+    ws = _big(tmp_path, daily=100_001)
+    with pytest.raises(dc.DeployPlanError) as e:
+        dc.deploy(ws, dry_run=True, skip_media=True)
+    msg = str(e.value)
+    assert "100 001" in msg and "--confirm-large-budget" in msg
+
+
+def test_guard_refuses_large_total_budget(tmp_path, _media):
+    ws = _big(tmp_path, total=10_000_001)
+    with pytest.raises(dc.DeployPlanError) as e:
+        dc.deploy(ws, dry_run=True, skip_media=True)
+    assert "10 000 001" in str(e.value) and "--confirm-large-budget" in str(e.value)
+
+
+def test_old_kopeck_style_total_is_now_millions_but_under_limit(tmp_path, _media):
+    """6000000 в creatives.json теперь честные 6 млн ₽ (а не 60 тыс.) — ниже порога, проходит."""
+    ws = _big(tmp_path, total=6_000_000)
+    plan = dc.deploy(ws, dry_run=True, skip_media=True)
+    assert plan["ad_plan"]["payload"]["budget_limit"] == 6_000_000
+
+
+def test_guard_boundary_values_pass(tmp_path, _media):
+    ws = _big(tmp_path, daily=100_000, total=10_000_000)
+    plan = dc.deploy(ws, dry_run=True, skip_media=True)
+    assert plan["ad_plan"]["payload"]["budget_limit"] == 10_000_000
+
+
+def test_guard_override_with_flag(tmp_path, _media):
+    ws = _big(tmp_path, daily=250_000, total=20_000_000)
+    plan = dc.deploy(ws, dry_run=True, skip_media=True, confirm_large_budget=True)
+    assert plan["ad_plan"]["payload"]["budget_limit"] == 20_000_000
+
+
+def test_guard_checks_ad_plan_daily_budget(tmp_path, _media):
+    creatives = {"campaign": {"name": "Т", "objective": "leadads", "budget_limit_day": 150_000},
+                 "creatives": DEFAULT_CREATIVES["creatives"]}
+    ws = _workspace(tmp_path, creatives=creatives, audiences=DEFAULT_AUDIENCES)
+    with pytest.raises(dc.DeployPlanError, match="150 000"):
+        dc.deploy(ws, dry_run=True, skip_media=True)
+
+
+def test_cli_has_confirm_large_budget_flag(tmp_path, _media, monkeypatch):
+    ws = _big(tmp_path, daily=250_000)
+    monkeypatch.setattr("sys.argv", ["deploy_campaign.py", "--workspace", str(ws), "--dry-run"])
+    assert dc.main() == 1
+    monkeypatch.setattr("sys.argv", ["deploy_campaign.py", "--workspace", str(ws), "--dry-run",
+                                     "--confirm-large-budget"])
+    assert dc.main() in (0, 2)
