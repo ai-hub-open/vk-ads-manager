@@ -335,3 +335,178 @@ def test_kopeck_units_vs_state():
     with pytest.raises(api.BudgetGuardError, match="в копейках из версии 0.7.0"):
         api.check_kopeck_units({"budget_limit": 5_000_000}, state={"budget_rub": 50000})
     api.check_kopeck_units({"budget_limit": 50000}, state={"budget_rub": 50000})
+
+
+# ---------- 0.7.2: ссылки, ord_data_required ----------
+
+class _JsonResp:
+    def __init__(self, status_code, body):
+        self.status_code = status_code
+        self.ok = status_code < 400
+        self._body = body
+        self.content = b"x"
+        self.text = str(body)
+
+    def json(self):
+        return self._body
+
+
+def test_urls_register_posts_and_caches(monkeypatch):
+    live = api.VKAdsClient(access_token="T", dry_run=False)
+    calls = []
+
+    def fake_request(method, url, **kw):
+        calls.append((method, url, kw.get("json")))
+        return _JsonResp(200, {"id": 555})
+
+    monkeypatch.setattr(live.session, "request", fake_request)
+    assert live.urls.register("https://example.com/a") == 555
+    assert live.urls.register("https://example.com/a") == 555
+    assert len(calls) == 1
+    assert calls[0][0] == "POST" and calls[0][1].endswith("/urls.json")
+    assert calls[0][2] == {"url": "https://example.com/a"}
+
+
+def test_urls_register_empty_is_error():
+    live = api.VKAdsClient(access_token="T", dry_run=True)
+    with pytest.raises(api.VKAdsError, match="url"):
+        live.urls.register("  ")
+
+
+def test_ord_data_required_is_recognized_without_retries(monkeypatch):
+    live = api.VKAdsClient(access_token="T", dry_run=False)
+    calls = []
+
+    def fake_request(method, url, **kw):
+        calls.append(url)
+        return _JsonResp(400, {"error": {"code": "ord_data_required", "message": "..."}})
+
+    monkeypatch.setattr(live.session, "request", fake_request)
+    with pytest.raises(api.OrdDataRequiredError) as e:
+        live.request("POST", "/campaigns.json", json={})
+    assert len(calls) == 1
+    assert "ИНН" in str(e.value)
+
+
+def test_tree_stops_on_ord_error(monkeypatch):
+    """Все группы упадут одинаково — дерево не долбит API по каждой."""
+    client = api.VKAdsClient(access_token="T", dry_run=True)
+    calls = []
+
+    def create(payload):
+        calls.append(payload)
+        raise api.OrdDataRequiredError("ord_data_required")
+
+    monkeypatch.setattr(client.campaigns, "create", create)
+    with pytest.raises(api.OrdDataRequiredError):
+        client.create_campaign_tree({"name": "К"}, GROUPS)
+    assert len(calls) == 1
+
+
+# ---------- фильтры списков: myTarget-синтаксис _campaign_id / _ad_plan_id ----------
+
+def _capture_get(monkeypatch, client, body):
+    seen = []
+
+    def fake_request(method, url, **kw):
+        seen.append(url)
+        return _JsonResp(200, body)
+
+    monkeypatch.setattr(client.session, "request", fake_request)
+    return seen
+
+
+def test_banners_list_uses_underscore_campaign_filter(monkeypatch):
+    live = api.VKAdsClient(access_token="T", dry_run=False)
+    seen = _capture_get(monkeypatch, live, {"items": []})
+    live.banners.list(campaign_id=777, fields="id,campaign_id")
+    assert "_campaign_id=777" in seen[0]
+    assert "&campaign_id=" not in seen[0]
+    assert "fields=id,campaign_id" in seen[0]
+
+
+def test_campaigns_list_uses_underscore_ad_plan_filter(monkeypatch):
+    live = api.VKAdsClient(access_token="T", dry_run=False)
+    seen = _capture_get(monkeypatch, live, {"items": []})
+    live.campaigns.list(ad_plan_id=555, fields="id,ad_plan_id")
+    assert "_ad_plan_id=555" in seen[0]
+    assert "&ad_plan_id=" not in seen[0]
+
+
+def test_only_children_drops_foreign_and_unknown():
+    items = [{"id": 1, "campaign_id": 7}, {"id": 2, "campaign_id": 8}, {"id": 3}]
+    assert api.only_children(items, "campaign_id", 7) == [{"id": 1, "campaign_id": 7}]
+
+
+def test_preflight_ord_filters_foreign_groups(monkeypatch):
+    live = api.VKAdsClient(access_token="T", dry_run=False)
+    monkeypatch.setattr(live.campaigns, "list", lambda **kw: [{"id": 1, "ad_plan_id": 5},
+                                                             {"id": 2, "ad_plan_id": 6}])
+    asked = []
+    monkeypatch.setattr(live.banners, "list",
+                        lambda campaign_id=None, **kw: asked.append(campaign_id) or [])
+    live.preflight_ord(5)
+    assert asked == [1]
+
+
+def test_packages_list_filters_objective_and_active(monkeypatch):
+    live = api.VKAdsClient(access_token="T", dry_run=False)
+    seen = _capture_get(monkeypatch, live, {"items": [
+        {"id": 3232, "name": "cpc", "objective": ["site_conversions"], "status": "active", "priced_event_type": 1},
+        {"id": 3229, "name": "ocpm", "objective": ["site_conversions"], "status": "blocked", "priced_event_type": 30},
+        {"id": 3215, "name": "lead", "objective": ["leadads"], "status": "active", "priced_event_type": 51},
+    ]})
+    items = live.packages.list(objective="site_conversions")
+    assert seen[0].endswith("/packages.json")
+    assert [p["id"] for p in items] == [3232]
+    assert items[0]["priced_event_type"] == 1
+
+
+def test_ord_error_carries_created_ad_plan_id(monkeypatch):
+    live = api.VKAdsClient(access_token="T", dry_run=False)
+
+    def fake_request(method, url, **kw):
+        if url.endswith("/ad_plans.json"):
+            return _JsonResp(200, {"id": 555})
+        return _JsonResp(400, {"error": {"code": "ord_data_required"}})
+
+    monkeypatch.setattr(live.session, "request", fake_request)
+    with pytest.raises(api.OrdDataRequiredError) as e:
+        live.create_campaign_tree({"name": "К"}, GROUPS)
+    assert e.value.ad_plan_id == 555
+    assert e.value.created_group_ids == []
+
+
+def test_preflight_ord_nothing_checked_is_not_ok(monkeypatch):
+    live = api.VKAdsClient(access_token="T", dry_run=False)
+    monkeypatch.setattr(live.campaigns, "list", lambda **kw: [{"id": 1, "ad_plan_id": 5}])
+    monkeypatch.setattr(live.banners, "list", lambda **kw: [{"id": 9}])  # без campaign_id — не наш
+    res = live.preflight_ord(5)
+    assert res["ok"] is False
+    assert "не удалось проверить" in res["reason"]
+
+
+def test_preflight_ord_asks_campaign_id_field(monkeypatch):
+    live = api.VKAdsClient(access_token="T", dry_run=False)
+    monkeypatch.setattr(live.campaigns, "list", lambda **kw: [{"id": 1, "ad_plan_id": 5}])
+    seen = {}
+    monkeypatch.setattr(live.banners, "list",
+                        lambda campaign_id=None, fields=None, **kw: seen.update(fields=fields) or [])
+    live.preflight_ord(5)
+    assert "campaign_id" in seen["fields"].split(",")
+
+
+def test_activate_blocked_when_nothing_checked(monkeypatch):
+    live = api.VKAdsClient(access_token="T", dry_run=False)
+    monkeypatch.setattr(live.campaigns, "list", lambda **kw: [])
+    with pytest.raises(api.OrdPreflightError, match="не удалось проверить"):
+        live.activate_ad_plan(5, confirmation=api.ACTIVATE_CONFIRMATION)
+
+
+def test_packages_list_skips_cannot_create_and_string_objective(monkeypatch):
+    live = api.VKAdsClient(access_token="T", dry_run=False)
+    _capture_get(monkeypatch, live, {"items": [
+        {"id": 3217, "objective": ["site_conversions"], "status": "active", "can_create": False},
+        {"id": 3232, "objective": "site_conversions", "status": "active", "priced_event_type": 1},
+    ]})
+    assert [p["id"] for p in live.packages.list(objective="site_conversions")] == [3232]

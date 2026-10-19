@@ -81,29 +81,120 @@ def test_banner_without_media_is_skipped():
     assert dc.build_banner_payload({"name": "cr1", "title": "Заголовок"}, {}) is None
 
 
+CR = {"name": "cr1", "title": "Заголовок", "description": "Короткий текст", "url": "https://example.com"}
+
+
 def test_banner_prefers_video_over_images():
-    payload = dc.build_banner_payload(
-        {"name": "cr1", "title": "T", "format": "video"},
-        {"video_id": 77, "image_id": 88},
-    )
+    payload = dc.build_banner_payload({**CR, "format": "video"},
+                                      {"video_id": 77, "image_id": 88}, url_id=5, logo_id=9)
     assert payload["videos"] == [{"id": 77}]
-    assert "images" not in payload
+    assert "image_600x600" not in payload["content"]
 
 
 def test_banner_title_not_silently_truncated():
-    """Лимит зависит от объекта (сайт 25 / прочее 40) — резать молча нельзя."""
-    long_title = "Очень длинный заголовок далеко за двадцать пять знаков"
-    payload = dc.build_banner_payload({"name": "c", "title": long_title}, {"image_id": 1})
-    assert payload["title"] == long_title
+    """Заголовок в пределах роли уходит целиком, без обрезки."""
+    title = "Заголовок на тридцать с лишним знаков"
+    assert 25 < len(title) <= 40
+    payload = dc.build_banner_payload({**CR, "title": title}, {"image_id": 1}, url_id=5, logo_id=9)
+    assert payload["textblocks"]["title_40_vkads"]["text"] == title
+
+
+# ---------- форма объявления по ролям (0.7.2) ----------
+
+def test_banner_role_form_matches_live_shape():
+    """Форма, подтверждённая вживую через MCP: urls.primary.id, textblocks, content по ролям."""
+    payload = dc.build_banner_payload(CR, {"image_id": 42, "width": 600, "height": 600},
+                                      url_id=777, logo_id=9)
+    assert payload["urls"] == {"primary": {"id": 777}}
+    assert payload["textblocks"] == {
+        "title_40_vkads": {"text": "Заголовок"},
+        "text_90": {"text": "Короткий текст"},
+        "cta_sites_full": {"text": "visitSite"},
+    }
+    assert payload["content"] == {"icon_256x256": {"id": 9}, "image_600x600": {"id": 42}}
+    for old in ("format", "title", "description", "url", "images", "call_to_action"):
+        assert old not in payload, f"VK отвергает старое поле {old}"
+
+
+def test_banner_title_over_40_is_error_not_cut():
+    with pytest.raises(dc.BannerPayloadError, match="title_40_vkads"):
+        dc.build_banner_payload({**CR, "title": "З" * 41}, {"image_id": 1}, url_id=5, logo_id=9)
+
+
+def test_banner_text_over_90_is_error_not_cut():
+    with pytest.raises(dc.BannerPayloadError, match="text_90"):
+        dc.build_banner_payload({**CR, "description": "т" * 91}, {"image_id": 1}, url_id=5, logo_id=9)
+
+
+def test_banner_short_text_field_wins_over_long_description():
+    payload = dc.build_banner_payload({**CR, "description": "д" * 500, "text_90": "Коротко"},
+                                      {"image_id": 1}, url_id=5, logo_id=9)
+    assert payload["textblocks"]["text_90"]["text"] == "Коротко"
+
+
+def test_banner_without_logo_is_clear_error():
+    with pytest.raises(dc.BannerPayloadError, match="icon_256x256"):
+        dc.build_banner_payload(CR, {"image_id": 1}, url_id=5, logo_id=None)
+
+
+def test_banner_without_url_is_clear_error():
+    with pytest.raises(dc.BannerPayloadError, match="url"):
+        dc.build_banner_payload(CR, {"image_id": 1}, url_id=None, logo_id=9)
+
+
+def test_company_info_not_sent_by_default():
+    """Роль about_company_115 не проверена вживую — по умолчанию не шлём (ОРД берётся из кабинета)."""
+    payload = dc.build_banner_payload({**CR, "company_info": "ИП Иванов, ИНН 123456789012"},
+                                      {"image_id": 1}, url_id=5, logo_id=9)
+    assert "about_company_115" not in payload["textblocks"]
+    assert "company_info" not in payload
+
+
+def test_about_company_only_by_explicit_field():
+    payload = dc.build_banner_payload({**CR, "about_company_115": "ИП Иванов, ИНН 123456789012"},
+                                      {"image_id": 1}, url_id=5, logo_id=9)
+    assert payload["textblocks"]["about_company_115"]["text"].startswith("ИП Иванов")
+
+
+def test_about_company_explicit_field_warns(tmp_path, _media):
+    creatives = {"campaign": DEFAULT_CREATIVES["campaign"],
+                 "creatives": [{**DEFAULT_CREATIVES["creatives"][0], "about_company_115": "ИП И."}]}
+    ws = _workspace(tmp_path, creatives=creatives, audiences=DEFAULT_AUDIENCES)
+    plan = dc.deploy(ws, dry_run=True, skip_media=True)
+    assert any("about_company_115" in w for w in plan["warnings"])
+
+
+@pytest.mark.parametrize("w, h, role", [
+    (600, 600, "image_600x600"),
+    (1080, 607, "image_1080x607"),
+    (1080, 1350, "image_1080x1350"),
+])
+def test_banner_image_role_by_size(w, h, role):
+    payload = dc.build_banner_payload(CR, {"image_id": 1, "width": w, "height": h}, url_id=5, logo_id=9)
+    assert payload["content"][role] == {"id": 1}
+
+
+def test_banner_square_not_600_is_error():
+    """Квадрат 1080 в роль image_600x600 VK не принимает — должен был ужаться до загрузки."""
+    with pytest.raises(dc.BannerPayloadError, match="ровно 600"):
+        dc.build_banner_payload(CR, {"image_id": 1, "width": 1080, "height": 1080}, url_id=5, logo_id=9)
+
+
+def test_banner_odd_ratio_is_error():
+    with pytest.raises(dc.BannerPayloadError, match="ни под одну роль"):
+        dc.build_banner_payload(CR, {"image_id": 1, "width": 1000, "height": 300}, url_id=5, logo_id=9)
 
 
 # ---------- полный dry-run прогон ----------
 
-def _workspace(tmp_path: Path, *, creatives=None, audiences=None) -> Path:
+def _workspace(tmp_path: Path, *, creatives=None, audiences=None, brand=None) -> Path:
     ws = tmp_path / "vk-campaign-test"
     ws.mkdir()
     (ws / "creatives.json").write_text(json.dumps(creatives, ensure_ascii=False), encoding="utf-8")
     (ws / "audiences.json").write_text(json.dumps(audiences, ensure_ascii=False), encoding="utf-8")
+    if brand is None:
+        brand = {"logo_url": "https://example.com/logo.png", "vk_logo_id": 9}
+    (ws / "brand.json").write_text(json.dumps(brand, ensure_ascii=False), encoding="utf-8")
     return ws
 
 
@@ -222,15 +313,17 @@ def test_public_url_creative_no_longer_skipped(tmp_path, monkeypatch):
     ws = _workspace(tmp_path, creatives=DEFAULT_CREATIVES, audiences=DEFAULT_AUDIENCES)
     uploaded = []
 
-    def fake_upload_image(self, source):
+    def fake_upload_image(self, source, **kw):
         uploaded.append(str(source))
         return {"id": 4242}
 
     monkeypatch.setattr(MediaAPI, "upload_image", fake_upload_image)
+    monkeypatch.setattr(MediaAPI, "upload_logo", fake_upload_image)
 
     plan = dc.deploy(ws, dry_run=True, skip_media=False)
 
-    assert uploaded == ["https://example.com/a.png"]
+    assert uploaded[0] == "https://example.com/a.png"
+    assert uploaded[1] == "https://example.com/logo.png", "логотип грузится отдельно"
     assert plan["banners_created"], "объявление должно собраться на картинке из ссылки"
 
 
@@ -417,3 +510,241 @@ def test_deploy_prints_budgets_in_rubles(tmp_path, _media, capsys):
     out = capsys.readouterr().out
     assert "Бюджет кампании" in out
     assert "60 000 ₽" in out and "4 000 ₽" in out
+
+
+# ---------- 0.7.2: логотип, регистрация ссылок, package_id, ОРД, проверка объявлений ----------
+
+def test_missing_logo_aborts_with_clear_message(tmp_path, _media):
+    ws = _workspace(tmp_path, creatives=DEFAULT_CREATIVES, audiences=DEFAULT_AUDIENCES, brand={})
+    with pytest.raises(dc.DeployPlanError, match="icon_256x256"):
+        dc.deploy(ws, dry_run=True, skip_media=True)
+
+
+def test_logo_found_in_assets_brand(tmp_path):
+    ws = tmp_path / "ws"
+    (ws / "assets" / "brand").mkdir(parents=True)
+    (ws / "assets" / "brand" / "logo.png").write_bytes(b"\x89PNG")
+    assert dc.find_logo_source(ws, {}) == ws / "assets" / "brand" / "logo.png"
+    assert dc.find_logo_source(ws, {"logo_url": "https://x/l.png"}) == "https://x/l.png"
+    assert dc.find_logo_source(tmp_path / "пусто", {}) is None
+
+
+def test_same_url_registered_once(tmp_path, monkeypatch, capsys):
+    """POST /urls.json по одному разу на адрес: одинаковые ссылки кэшируются в рамках залива."""
+    creatives = {"campaign": DEFAULT_CREATIVES["campaign"], "creatives": [
+        {**DEFAULT_CREATIVES["creatives"][0], "name": "cr1"},
+        {**DEFAULT_CREATIVES["creatives"][0], "name": "cr2"},
+    ]}
+    monkeypatch.setattr(dc, "upload_media", lambda client, crs, ws, skip, plan:
+                        {"cr1": {"image_id": 1}, "cr2": {"image_id": 2}})
+    ws = _workspace(tmp_path, creatives=creatives, audiences=DEFAULT_AUDIENCES)
+    plan = dc.deploy(ws, dry_run=True, skip_media=True)
+    out = capsys.readouterr().out
+    assert out.count("/urls.json") == 1
+    assert len(plan["banners_created"]) == 2
+
+
+def test_dry_run_banner_uses_registered_url_id(tmp_path, _media, monkeypatch):
+    captured = {}
+    real_tree = dc.VKAdsClient.create_campaign_tree
+
+    def spy(self, ad_plan_payload, groups):
+        captured["groups"] = groups
+        return real_tree(self, ad_plan_payload, groups)
+
+    monkeypatch.setattr(dc.VKAdsClient, "create_campaign_tree", spy)
+    ws = _workspace(tmp_path, creatives=DEFAULT_CREATIVES, audiences=DEFAULT_AUDIENCES)
+    dc.deploy(ws, dry_run=True, skip_media=True)
+    banner = captured["groups"][0]["banners"][0]
+    assert banner["urls"]["primary"]["id"] == "DRY_URL_0"
+    assert banner["content"]["icon_256x256"] == {"id": 9}
+
+
+def test_package_id_goes_to_group_and_not_ad_plan(tmp_path, _media):
+    creatives = {"campaign": {**DEFAULT_CREATIVES["campaign"], "package_id": 3232},
+                 "creatives": DEFAULT_CREATIVES["creatives"]}
+    ws = _workspace(tmp_path, creatives=creatives, audiences=DEFAULT_AUDIENCES)
+    plan = dc.deploy(ws, dry_run=True, skip_media=True)
+    assert "package_id" not in plan["ad_plan"]["payload"]
+    assert not any("package_id" in w for w in plan["warnings"])
+
+
+def test_missing_package_id_is_warned(tmp_path, _media):
+    ws = _workspace(tmp_path, creatives=DEFAULT_CREATIVES, audiences=DEFAULT_AUDIENCES)
+    plan = dc.deploy(ws, dry_run=True, skip_media=True)
+    assert any("package_id" in w for w in plan["warnings"])
+
+
+def test_ord_data_required_becomes_clear_error(tmp_path, _media, monkeypatch):
+    def boom(self, ad_plan_payload, groups):
+        raise dc.OrdDataRequiredError("ord_data_required")
+
+    monkeypatch.setattr(dc.VKAdsClient, "create_campaign_tree", boom)
+    ws = _workspace(tmp_path, creatives=DEFAULT_CREATIVES, audiences=DEFAULT_AUDIENCES)
+    with pytest.raises(dc.DeployPlanError) as e:
+        dc.deploy(ws, dry_run=True, skip_media=True)
+    assert "ИНН" in str(e.value) and "ОРД" in str(e.value)
+
+
+class _BannersStub:
+    def __init__(self, by_group):
+        self.by_group = by_group
+
+    def list(self, campaign_id=None, limit=100, offset=0, fields=None):
+        self.fields = fields
+        return self.by_group.get(campaign_id, [])
+
+
+class _ClientStub:
+    def __init__(self, by_group):
+        self.banners = _BannersStub(by_group)
+
+
+def test_verify_banners_uses_banner_list_not_group_field():
+    """Группа на паузе отдаёт пустое поле banners — смотрим список объявлений группы."""
+    client = _ClientStub({101: [{"id": 1, "campaign_id": 101}], 102: []})
+    problems = dc.verify_banners(client, [101, 102])
+    assert len(problems) == 1 and "102" in problems[0]
+    assert "campaign_id" in client.banners.fields
+    assert dc.verify_banners(_ClientStub({101: [{"id": 1, "campaign_id": 101}]}), [101]) == []
+
+
+def test_verify_banners_ignores_foreign_banners_if_filter_ignored():
+    """VK проигнорировал _campaign_id и отдал объявления кабинета — это не «успех»."""
+    client = _ClientStub({102: [{"id": 7, "campaign_id": 999}, {"id": 8}]})
+    problems = dc.verify_banners(client, [102])
+    assert len(problems) == 1 and "чужих" in problems[0]
+
+
+# ---------- 0.7.2 ревью: порядок проверок, package_id, сохранение плана, ОРД с id ----------
+
+class _LiveStub:
+    """Боевой клиент без сети: запоминает вызовы, ничего не создаёт."""
+
+    def __init__(self, calls):
+        self.calls = calls
+
+
+def _fake_live_client(monkeypatch, calls, *, ord_on_group=False):
+    """Подменяет VKAdsClient.from_credentials клиентом без сети (session.request замокан)."""
+    from scripts.vk_ads_api import VKAdsClient
+
+    class _Resp:
+        def __init__(self, status, body):
+            self.status_code = status
+            self.ok = status < 400
+            self._body = body
+            self.content = b"x"
+            self.text = str(body)
+
+        def json(self):
+            return self._body
+
+    def fake_request(method, url, **kw):
+        calls.append((method, url))
+        if method == "POST" and url.endswith("/ad_plans.json"):
+            return _Resp(200, {"id": 555})
+        if method == "POST" and url.endswith("/campaigns.json"):
+            if ord_on_group:
+                return _Resp(400, {"error": {"code": "ord_data_required"}})
+            return _Resp(200, {"id": 777, "banners": [{"id": 1}]})
+        if method == "POST" and url.endswith("/urls.json"):
+            return _Resp(200, {"id": 31})
+        if "/banners.json" in url:
+            return _Resp(200, {"items": [{"id": 1, "campaign_id": 777}]})
+        return _Resp(200, {"items": []})
+
+    def from_credentials(cls=None, dry_run=False):
+        client = VKAdsClient(access_token="T", dry_run=False)
+        monkeypatch.setattr(client.session, "request", fake_request)
+        client.upload = lambda path, files, timeout=300: calls.append(("UPLOAD", path)) or {"id": 42}
+        return client
+
+    monkeypatch.setattr(dc.VKAdsClient, "from_credentials", classmethod(lambda cls, dry_run=False: from_credentials()))
+
+
+def test_real_run_without_package_id_stops_before_any_call(tmp_path, monkeypatch):
+    calls = []
+    _fake_live_client(monkeypatch, calls)
+    ws = _workspace(tmp_path, creatives=DEFAULT_CREATIVES, audiences=DEFAULT_AUDIENCES)
+    with pytest.raises(dc.DeployPlanError, match="package_id"):
+        dc.deploy(ws, dry_run=False, skip_media=True)
+    assert calls == [], "без package_id в VK не должно уйти ни одного запроса"
+
+
+def test_logo_checked_before_media_upload(tmp_path, monkeypatch):
+    uploads = []
+    monkeypatch.setattr(dc, "upload_media", lambda *a, **k: uploads.append("media") or {})
+    ws = _workspace(tmp_path, creatives=DEFAULT_CREATIVES, audiences=DEFAULT_AUDIENCES, brand={})
+    with pytest.raises(dc.DeployPlanError, match="icon_256x256"):
+        dc.deploy(ws, dry_run=True, skip_media=False)
+    assert uploads == [], "без логотипа медиа не грузим"
+
+
+def test_deploy_plan_saved_even_on_error(tmp_path, monkeypatch):
+    """Ошибка после загрузки медиа — id контента всё равно в deploy_plan.json."""
+    monkeypatch.setattr(dc, "upload_media", lambda client, crs, ws, skip, plan:
+                        plan.update(media_uploaded=[{"creative": "cr1", "image_id": 42}]) or {})
+    ws = _workspace(tmp_path, creatives=DEFAULT_CREATIVES, audiences=DEFAULT_AUDIENCES)
+    with pytest.raises(dc.DeployPlanError):
+        dc.deploy(ws, dry_run=True, skip_media=True)
+    saved = json.loads((ws / "assets" / "deploy_plan.json").read_text(encoding="utf-8"))
+    assert saved["media_uploaded"] == [{"creative": "cr1", "image_id": 42}]
+    assert saved["logo_id"] == 9
+    assert any("ОСТАНОВЛЕНО" in e for e in saved["errors"])
+
+
+def test_ord_on_group_reports_exact_ad_plan_id(tmp_path, monkeypatch, _media):
+    calls = []
+    _fake_live_client(monkeypatch, calls, ord_on_group=True)
+    creatives = {"campaign": {**DEFAULT_CREATIVES["campaign"], "package_id": 3232},
+                 "creatives": DEFAULT_CREATIVES["creatives"]}
+    ws = _workspace(tmp_path, creatives=creatives, audiences=DEFAULT_AUDIENCES)
+    with pytest.raises(dc.DeployPlanError) as e:
+        dc.deploy(ws, dry_run=False, skip_media=True)
+    assert "Кампания 555 создана пустой, на паузе" in str(e.value)
+    assert sum(1 for m, u in calls if u.endswith("/campaigns.json")) == 1, "без повторов"
+    saved = json.loads((ws / "assets" / "deploy_plan.json").read_text(encoding="utf-8"))
+    assert saved["ad_plan"]["id"] == 555
+
+
+def test_real_run_success_with_fake_client(tmp_path, monkeypatch, _media):
+    calls = []
+    _fake_live_client(monkeypatch, calls)
+    creatives = {"campaign": {**DEFAULT_CREATIVES["campaign"], "package_id": 3232},
+                 "creatives": DEFAULT_CREATIVES["creatives"]}
+    ws = _workspace(tmp_path, creatives=creatives, audiences=DEFAULT_AUDIENCES)
+    plan = dc.deploy(ws, dry_run=False, skip_media=True)
+    assert plan["errors"] == []
+    assert any("_campaign_id=777" in u for m, u in calls), "проверка объявлений — с фильтром _campaign_id"
+
+
+def test_non_square_roles_warned_as_unverified(tmp_path, monkeypatch):
+    monkeypatch.setattr(dc, "upload_media", lambda client, crs, ws, skip, plan:
+                        {"cr1": {"image_id": 42, "width": 1080, "height": 607}})
+    ws = _workspace(tmp_path, creatives=DEFAULT_CREATIVES, audiences=DEFAULT_AUDIENCES)
+    plan = dc.deploy(ws, dry_run=True, skip_media=True)
+    assert any("image_1080x607" in w and "вживую не создавалось" in w for w in plan["warnings"])
+
+
+def test_non_square_wrong_exact_size_is_error():
+    with pytest.raises(dc.BannerPayloadError, match="ровно 1080×607"):
+        dc.build_banner_payload(CR, {"image_id": 1, "width": 900, "height": 506}, url_id=5, logo_id=9)
+
+
+# ---------- интересы с ID из targetings_tree (Шаг 6.5) ----------
+
+def test_interest_ids_from_dicts_and_numbers(capsys):
+    ids = dc.interest_ids([{"id": 101, "name": "Маркетинг"}, 202, "303", "SMM без id"])
+    assert ids == [101, 202, 303]
+    assert "SMM без id" in capsys.readouterr().out
+
+
+def test_audience_targeting_sends_interest_ids():
+    aud = {"id": "W1", "config": {"interests": [{"id": 7, "name": "Бизнес"}]}}
+    assert dc.audience_to_targeting(aud)["interests"] == [7]
+
+
+def test_launch_guide_prints_interest_names_with_ids():
+    from scripts import generate_launch_guide as lg
+    assert lg._interests_text([{"id": 7, "name": "Бизнес"}, "SMM"]) == "Бизнес (id 7), SMM"

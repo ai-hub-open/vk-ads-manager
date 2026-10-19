@@ -55,8 +55,10 @@ from urllib.parse import urlparse
 
 try:
     from scripts._console import setup_console
+    from scripts._image_prep import fit_square, prepare_image, LOGO_SIDE
 except ImportError:  # запуск напрямую, не как модуль пакета
     from _console import setup_console
+    from _image_prep import fit_square, prepare_image, LOGO_SIDE
 
 try:
     import requests
@@ -162,6 +164,24 @@ class OrdPreflightError(VKAdsError):
     """Активация заблокирована: не пройдена проверка ОРД-маркировки."""
 
 
+ORD_DATA_REQUIRED_MESSAGE = (
+    "VK отказал в создании объявления: в кабинете не заполнены данные для ОРД "
+    "(ord_data_required). Нужны ИНН и название рекламодателя в настройках кабинета "
+    "ads.vk.ru (раздел про маркировку рекламы / ОРД; для агентства — данные клиента и договора, "
+    "см. references/ord-agency.md). Заполните их в кабинете и запустите залив заново — "
+    "повторять запрос без этого бесполезно."
+)
+
+
+class OrdDataRequiredError(VKAdsError):
+    """VK отклонил создание: в кабинете нет данных ОРД (ИНН, название рекламодателя)."""
+
+
+def is_ord_data_required(error) -> bool:
+    """Ответ VK с кодом ord_data_required (в тексте ошибки или в теле ответа)."""
+    return "ord_data_required" in str(error)
+
+
 class VKAdsClient:
     def __init__(self, access_token: str, dry_run: bool = False):
         self.access_token = access_token
@@ -182,6 +202,8 @@ class VKAdsClient:
         self.audiences = AudiencesAPI(self)
         self.statistics = StatisticsAPI(self)
         self.media = MediaAPI(self)
+        self.urls = UrlsAPI(self)
+        self.packages = PackagesAPI(self)
 
     # ---------- Конструкторы ----------
 
@@ -253,6 +275,9 @@ class VKAdsClient:
                         err = resp.json()
                     except Exception:
                         err = {"raw": resp.text}
+                    if is_ord_data_required(err):
+                        # Без повторов: пока в кабинете не заполнят ОРД, ответ не изменится.
+                        raise OrdDataRequiredError(f"{ORD_DATA_REQUIRED_MESSAGE} Ответ VK: HTTP {resp.status_code}: {err}")
                     raise VKAdsError(f"HTTP {resp.status_code}: {err}")
                 return resp.json() if resp.content else {}
             except requests.RequestException as e:
@@ -363,6 +388,12 @@ class VKAdsClient:
 
             try:
                 g_resp = self.campaigns.create(g_payload)
+            except OrdDataRequiredError as e:
+                # Все группы упадут одинаково — не долбим API, отдаём наверх одну понятную ошибку
+                # с точными id того, что уже создано (кампания пустая, на паузе).
+                e.ad_plan_id = None if self.dry_run else ad_plan_id
+                e.created_group_ids = [g["id"] for g in result["groups"]]
+                raise
             except VKAdsError as e:
                 result["errors"].append(f"группа '{g_payload.get('name')}': {e}")
                 continue
@@ -382,7 +413,9 @@ class VKAdsClient:
             if banner_payloads and not created and not self.dry_run:
                 result["errors"].append(
                     f"группа {group_id}: в ответе нет созданных объявлений — "
-                    f"проверь группу через ad_groups_get(fields='...,banners,issues')"
+                    f"проверь список объявлений группы: GET /banners.json?_campaign_id={group_id} "
+                    f"(MCP: vk_ads_banners_list(campaign_id={group_id})). Поле banners у группы "
+                    f"на паузе всегда пустое — по нему не суди"
                 )
             result["groups"].append(group_rec)
 
@@ -394,12 +427,23 @@ class VKAdsClient:
         не будет присвоен. Возвращает {'ok': bool, 'banners_without_company_info': [...]}.
         """
         problems = []
-        groups = self.campaigns.list(ad_plan_id=ad_plan_id)
+        checked = 0
+        groups = only_children(self.campaigns.list(ad_plan_id=ad_plan_id, fields="id,name,ad_plan_id"),
+                               "ad_plan_id", ad_plan_id)
         for g in groups:
             gid = g.get("id")
-            for b in self.banners.list(campaign_id=gid):
+            # campaign_id запрашиваем явно: без него only_children отбросит всё и проверять будет нечего.
+            # company_info в списке допустимых полей banners нет — VK его не отдаёт (см. «Известные ограничения»)
+            for b in only_children(self.banners.list(campaign_id=gid, fields="id,campaign_id"),
+                                   "campaign_id", gid):
+                checked += 1
                 if not (b.get("company_info") or "").strip():
                     problems.append(b.get("id"))
+        if not checked:
+            # Ничего не проверено — это не «всё в порядке»: барьер не должен молча пропускать кампанию
+            return {"ok": False, "banners_without_company_info": [],
+                    "reason": f"не удалось проверить: у кампании {ad_plan_id} не найдено ни одной группы "
+                              "с объявлениями"}
         return {"ok": not problems, "banners_without_company_info": problems}
 
     def activate_ad_plan(
@@ -420,6 +464,11 @@ class VKAdsClient:
         if not allow_missing_ord and not self.dry_run:
             check = self.preflight_ord(ad_plan_id)
             if not check["ok"]:
+                if check.get("reason"):
+                    raise OrdPreflightError(
+                        f"Активация заблокирована ОРД-preflight: {check['reason']}. Проверь кампанию в "
+                        "кабинете (или явно передай allow_missing_ord=True после ручной проверки ОРД)."
+                    )
                 raise OrdPreflightError(
                     "Активация заблокирована ОРД-preflight: не заполнен company_info у объявлений "
                     f"{check['banners_without_company_info']}. Заполни юр.данные (или явно передай "
@@ -462,10 +511,17 @@ class CampaignsAPI:
     def __init__(self, client: VKAdsClient):
         self.client = client
 
-    def list(self, ad_plan_id: Optional[int] = None, limit: int = 100, offset: int = 0) -> list:
+    def list(self, ad_plan_id: Optional[int] = None, limit: int = 100, offset: int = 0,
+             fields: Optional[str] = None) -> list:
+        """Список групп. Фильтр — myTarget-синтаксис `_ad_plan_id` (так фильтрует и
+        хостовый MCP). Вживую в REST-клиенте не проверено: если VK фильтр проигнорирует,
+        вернутся группы всего кабинета — отсеивай `only_children(..., "ad_plan_id", id)`
+        (для этого запрашивай поле ad_plan_id в `fields`)."""
         path = f"/campaigns.json?limit={limit}&offset={offset}"
         if ad_plan_id:
-            path += f"&ad_plan_id={ad_plan_id}"
+            path += f"&_ad_plan_id={ad_plan_id}"
+        if fields:
+            path += f"&fields={fields}"
         data = self.client.request("GET", path)
         return data.get("items", []) if isinstance(data, dict) else data
 
@@ -497,10 +553,17 @@ class BannersAPI:
     def __init__(self, client: VKAdsClient):
         self.client = client
 
-    def list(self, campaign_id: Optional[int] = None, limit: int = 100, offset: int = 0) -> list:
+    def list(self, campaign_id: Optional[int] = None, limit: int = 100, offset: int = 0,
+             fields: Optional[str] = None) -> list:
+        """Список объявлений. Фильтр по группе — `_campaign_id` (myTarget-синтаксис, так
+        же шлёт хостовый MCP). Вживую в REST-клиенте не проверено: если VK фильтр
+        проигнорирует, придут объявления всего кабинета — отсеивай
+        `only_children(..., "campaign_id", id)`."""
         path = f"/banners.json?limit={limit}&offset={offset}"
         if campaign_id:
-            path += f"&campaign_id={campaign_id}"
+            path += f"&_campaign_id={campaign_id}"
+        if fields:
+            path += f"&fields={fields}"
         data = self.client.request("GET", path)
         return data.get("items", []) if isinstance(data, dict) else data
 
@@ -518,8 +581,10 @@ class BannersAPI:
         Объявления создаются **вложенным массивом** внутри группы:
         `campaigns.create({..., "banners": [...]})` — или деревом целиком через
         `client.create_campaign_tree(...)`. «Долить» объявления в существующую
-        группу нельзя: группа без баннеров остаётся мёртвой
-        (`NO_BANNERS_WITH_ACTIVE_STATUS`), её пересоздают.
+        группу нельзя: группа, созданная без баннеров, остаётся пустой навсегда — её
+        пересоздают. Проверка залива — по списку объявлений группы
+        (`banners.list(campaign_id=...)`): провал = пустой список. Поле `banners` и issue
+        `NO_BANNERS_WITH_ACTIVE_STATUS` у группы на паузе — не признак провала.
         """
         raise VKAdsError(
             "Отдельного создания объявления в VK Ads API нет: POST /banners.json "
@@ -581,9 +646,37 @@ class MediaAPI:
         self.client = client
 
     def upload_image(self, source: Union[str, Path]) -> dict:
-        """Загружает картинку из локального файла или по публичной ссылке."""
+        """Загружает картинку объявления из локального файла или по публичной ссылке.
+
+        Перед загрузкой картинка приводится к точному размеру роли
+        (`_image_prep.prepare_image`): квадрат > 600 → 600×600 (роль `image_600x600`
+        отклоняет 1080), 16:9 → 1080×607, 4:5 → 1080×1350. Исходник не меняется —
+        уходит копия из памяти. К ответу добавляются `width`/`height` загруженного,
+        `role` (нет — соотношение не подходит ни под одну роль), `too_small`
+        и `resized_from`, если ужимали.
+        """
+        return self._upload_prepared(source, prepare_image)
+
+    def upload_logo(self, source: Union[str, Path]) -> dict:
+        """Логотип для роли icon_256x256: квадрат больше 256 ужимается до 256×256."""
+        return self._upload_prepared(source, lambda blob: fit_square(blob, side=LOGO_SIDE))
+
+    def _upload_prepared(self, source, prep_fn) -> dict:
         name, blob, mime = self._read_source(source, self.IMAGE_MIME, "image/png")
-        return self.client.upload(self.IMAGE_ENDPOINT, files={"file": (name, blob, mime)})
+        blob, prep = prep_fn(blob)
+        resp = self.client.upload(self.IMAGE_ENDPOINT, files={"file": (name, blob, prep["mime"] or mime)})
+        if isinstance(resp, dict):
+            resp = dict(resp)
+            if prep["width"]:
+                resp.setdefault("width", prep["width"])
+                resp.setdefault("height", prep["height"])
+            if prep.get("role"):
+                resp["role"] = prep["role"]
+            if prep.get("too_small"):
+                resp["too_small"] = True
+            if prep["resized"]:
+                resp["resized_from"] = prep["original"]
+        return resp
 
     def upload_video(self, source: Union[str, Path]) -> dict:
         """Загружает видео (до 90 МБ, mp4/mpeg/avi/mov) из файла или по ссылке."""
@@ -648,6 +741,77 @@ class MediaAPI:
         raise VKAdsError(f"Видео {video_id} не обработалось за {max_attempts * poll_interval}s")
 
 
+def only_children(items, parent_key: str, parent_id) -> list:
+    """Оставляет записи, у которых `parent_key` совпадает с `parent_id`.
+
+    Защита на случай, если VK проигнорировал фильтр `_campaign_id` / `_ad_plan_id`
+    и отдал объекты всего кабинета: без этого «у группы есть объявления» читалось бы
+    по чужим объявлениям. Запись без поля родителя тоже отбрасывается — подтвердить
+    её принадлежность нечем.
+    """
+    return [it for it in (items or []) if isinstance(it, dict)
+            and it.get(parent_key) is not None and str(it.get(parent_key)) == str(parent_id)]
+
+
+class PackagesAPI:
+    """Пакеты размещения: GET /packages.json. ⚠️ В REST-клиенте вживую не проверено.
+
+    Логика как у MCP `vk_ads_packages_list`: весь список одним ответом, фильтр по
+    `objective` на клиенте. `package_id` обязателен при создании группы.
+    Без пикселя с целью — пакет с оплатой за клики (`priced_event_type: 1`);
+    oCPM (`30`) требует `priced_goal` от пикселя.
+    """
+
+    KEYS = ("id", "name", "objective", "status", "price", "priced_event_type", "banner_format_id",
+            "can_create")
+
+    def __init__(self, client: VKAdsClient):
+        self.client = client
+
+    def list(self, objective: Optional[str] = None, only_active: bool = True) -> list:
+        data = self.client.request("GET", "/packages.json")
+        items = data.get("items", []) if isinstance(data, dict) else (data or [])
+        if objective:
+            want = objective.lower()
+            def objectives(p):
+                o = p.get("objective") or []
+                return [o] if isinstance(o, str) else list(o)
+            items = [p for p in items if want in [str(o).lower() for o in objectives(p)]]
+        if only_active:
+            # can_create: false — VK отклонит группу как invalid_package, даже если status active
+            items = [p for p in items if p.get("status", "active") == "active"
+                     and p.get("can_create", True) is not False]
+        return [{k: p.get(k) for k in self.KEYS} for p in items]
+
+
+class UrlsAPI:
+    """Регистрация адреса сайта для объявления: POST /urls.json {"url": ...} → id.
+
+    В объявлении ссылка задаётся как `urls: {"primary": {"id": <id>}}` (сверено
+    вживую через MCP 10.2026). GET /urls.json отвечает 405 — списка нет, поэтому
+    одинаковые адреса кэшируем в рамках одного клиента (одного залива).
+    """
+
+    def __init__(self, client: VKAdsClient):
+        self.client = client
+        self._cache: dict = {}
+
+    def register(self, url: str):
+        url = (url or "").strip()
+        if not url:
+            raise VKAdsError("Пустой адрес сайта: у объявления должен быть url посадочной.")
+        if url in self._cache:
+            return self._cache[url]
+        resp = self.client.request("POST", "/urls.json", json={"url": url})
+        url_id = resp.get("id") if isinstance(resp, dict) else None
+        if url_id is None:
+            if not self.client.dry_run:
+                raise VKAdsError(f"VK не вернул id для адреса {url}: {resp}")
+            url_id = f"DRY_URL_{len(self._cache)}"
+        self._cache[url] = url_id
+        return url_id
+
+
 class StatisticsAPI:
     def __init__(self, client: VKAdsClient):
         self.client = client
@@ -700,6 +864,22 @@ def cmd_audit(args):
     for c in plans:
         budget = c.get("budget_limit_day") or 0  # API отдаёт рубли
         print(f"  [{c.get('status')}] {c.get('id')} '{c.get('name')}' — {budget} ₽/день")
+
+
+def cmd_packages(args):
+    """Пакеты размещения для package_id (путь B без MCP). Не проверено вживую."""
+    try:
+        client = VKAdsClient.from_credentials(dry_run=False)
+    except Exception:
+        client = VKAdsClient.from_env(dry_run=False)
+    items = client.packages.list(objective=args.objective)
+    goal = f", цель {args.objective}" if args.objective else ""
+    print(f"Пакетов (активных{goal}): {len(items)}")
+    print("priced_event_type: 0 = показы (CPM), 1 = клики (CPC), 30 = oCPM (нужен пиксель с целью), "
+          "51 = лиды. Без пикселя — бери 1.")
+    for p in items:
+        print(f"  id={p['id']}  {p['name']}  priced_event_type={p['priced_event_type']}  "
+              f"banner_format_id={p['banner_format_id']}")
 
 
 def cmd_probe(args):
@@ -778,6 +958,10 @@ def main():
     p_audit = sub.add_parser("audit", help="Список кампаний (ad_plans)")
     p_audit.add_argument("--limit", type=int, default=100)
     p_audit.set_defaults(func=cmd_audit)
+
+    p_pack = sub.add_parser("packages", help="Пакеты размещения (package_id) — не проверено вживую")
+    p_pack.add_argument("--objective", default=None, help="Цель: site_conversions, leadads, …")
+    p_pack.set_defaults(func=cmd_packages)
 
     p_probe = sub.add_parser("probe-schema", help="Live-сверка имён полей с кабинетом")
     p_probe.set_defaults(func=cmd_probe)

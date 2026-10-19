@@ -6,8 +6,8 @@
 
 | Сервер в конфиге | URL | Что даёт |
 |---|---|---|
-| `vk-ads` | `https://vkads-mcp.aihub.click.ru/mcp` | 45 инструментов VK Ads API (`vk_ads_*`: кампании, группы, объявления, аудитории, статистика) |
-| `keepimage` (хранилище картинок) | `https://storage.aihub.click.ru/mcp` | Временное файловое хранилище: публикует картинку → публичная ссылка без авторизации, живёт ≤2 ч. Нужно, чтобы заливать локальные картинки в VK (`vk_ads_content_upload_image`). Инструменты: `storage_publish_image`, `storage_list`, `storage_info`, `storage_delete`. HTTP API для больших файлов — `PUT/POST /v1/objects`. Только картинки (PNG/JPEG/GIF/WebP), не видео |
+| `vk-ads` | `https://vkads-mcp.aihub.click.ru/mcp` | 46 инструментов VK Ads API (`vk_ads_*`: кампании, группы, объявления, ссылки, аудитории, статистика) |
+| `keepimage` (хранилище картинок) | `https://storage.aihub.click.ru/mcp` | Временное файловое хранилище: публикует картинку → публичная ссылка без авторизации, живёт ≤2 ч. Нужно, чтобы заливать локальные картинки в VK (`vk_ads_content_upload_image`). Инструменты: `storage_publish_image`, `storage_list`, `storage_info`, `storage_delete`. HTTP API — `PUT/POST /v1/objects`: им пользуется `scripts/upload_creatives_to_storage.py`, это рабочий путь. `storage_publish_image(data_base64)` модели не подходит для креативов — картинка 1080×1080 в base64 это сотни тысяч символов в вызове; разве что крошечный файл до ~50 КБ. Только картинки (PNG/JPEG/GIF/WebP), не видео |
 
 Корневой путь `/` отдаёт 404 — рабочий JSON-RPC endpoint именно `/mcp`. Health-check: `GET /healthz` → `OK`.
 
@@ -52,7 +52,7 @@ python -m scripts.setup_vk_ads_mcp \
 Установщик **не запускает никаких процессов** и не требует Bun — он только дописывает `mcpServers` в конфиги (с бэкапом, существующие серверы сохраняются).
 
 При подключении по пути click.ru установщик заодно:
-- подключает коннектор `keepimage` (`https://storage.aihub.click.ru/mcp`, header `X-Auth-Token`) — инструмент `storage_publish_image` для заливки картинок в средах без запуска кода. Отключить: `--no-keepimage`. Снимается вместе с `vk-ads` при `--remove` (если не задан `--no-keepimage`);
+- подключает коннектор `keepimage` (`https://storage.aihub.click.ru/mcp`, header `X-Auth-Token`) — хранилище для `scripts/upload_creatives_to_storage.py` (base64 через `storage_publish_image` модель для креативов не использует — слишком большие строки). Отключить: `--no-keepimage`. Снимается вместе с `vk-ads` при `--remove` (если не задан `--no-keepimage`);
 - сохраняет токен click.ru в реестр ключей (`clickru`, а с `--click-ru-user-id` — ещё и `clickru_user_id`), поэтому скрипт `scripts/upload_creatives_to_storage.py` работает сразу — отдельный `manage_credentials set clickru` не нужен.
 
 Ни то, ни другое не выполняется при `--dry-run` (только сообщается) и на пути с готовым `--vk-ads-token` (токен click.ru не используется).

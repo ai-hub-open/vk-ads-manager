@@ -122,7 +122,10 @@ grant_type=client_credentials&client_id={ID}&client_secret={SECRET}
 ### Объявления — `/banners` (UI «Объявление»)
 Ребёнок Группы — обязателен `campaign_id` (НЕ `ad_plan_id`).
 
-- `GET /banners.json?campaign_id={id}` — список объявлений в группе
+- `GET /banners.json?_campaign_id={id}` — список объявлений в группе. Фильтры — в
+  myTarget-синтаксисе с подчёркиванием (`_campaign_id`, `_ad_plan_id`), так шлёт и хостовый MCP.
+  В REST-клиенте вживую не проверено: на случай, если VK фильтр проигнорирует, клиент
+  отсеивает чужие объекты по полю `campaign_id` (`only_children`).
 - `GET /banners/{id}.json`
 - ~~`POST /banners.json`~~ — **такого метода нет**, см. ниже
 
@@ -135,23 +138,33 @@ grant_type=client_credentials&client_id={ID}&client_secret={SECRET}
 
 - `PUT /banners/{id}.json`
 
-**Объект Banner (универсальная запись):**
+**Объект Banner (объявление на сайт, мультиформат) — форма по ролям:**
 ```json
 {
-  "id": 11111,
-  "campaign_id": 67890,
-  "status": "moderating|accepted|rejected|blocked",
-  "format": "universal",
-  "title": "SMM с AI — экономьте 20 часов",
-  "description": "Полная воронка контента. 7 дней бесплатно.",
-  "url": "https://aismm.pro/ru?utm_source=vk_ads&utm_campaign=...",
-  "call_to_action": "learn_more",
-  "images": [{"id": "...", "url": "..."}],
-  "videos": [],
-  "company_info": "ИП Михалева Н.С., ИНН 121525316700"
+  "name": "cr_snizu_img_v1",
+  "status": "blocked",
+  "urls": {"primary": {"id": 123456}},
+  "textblocks": {
+    "title_40_vkads": {"text": "SMM с AI — экономьте 20 часов"},
+    "text_90": {"text": "Полная воронка контента. 7 дней бесплатно."},
+    "cta_sites_full": {"text": "visitSite"}
+  },
+  "content": {
+    "icon_256x256": {"id": 111},
+    "image_600x600": {"id": 222}
+  }
 }
 ```
-`company_info` — юр.данные для ОРД. Заполнять при рекламе товаров с онлайн-продажей; для услуг/офлайн оставлять пустым (см. `vk-ads-specs.md` → модерация).
+Сверено вживую через MCP (10.2026). Старые поля `format` / `title` / `description` / `url` /
+`images` / `call_to_action` VK отвергает как неизвестные.
+
+- `urls.primary.id` — из `POST /urls.json` с телом `{"url": "<адрес>"}` (`GET` → 405). Одинаковые адреса регистрируй один раз.
+- Лимиты ролей: `title_40_vkads` ≤ 40, `text_90` ≤ 90 — не резать молча.
+- `image_600x600` — квадрат **ровно 600×600** (1080 отклоняется; роли под квадрат 1080 нет — `banner_patterns`, 19.10.2026). `image_1080x607` / `image_1080x1350` есть в `banner_patterns` (шаблоны 513 / 515), но объявление с ними вживую не создавалось; точный размер — по описанию MCP.
+- `about_company_115` («О компании», ≤115) — необязательная роль шаблонов сайта; **по умолчанию не шлём**: данные ОРД VK берёт из настроек кабинета. Только по явному полю `about_company_115` в креативе.
+- `icon_256x256` (логотип) обязателен во всех шаблонах сайта (`banner_patterns` 513–515).
+- Видео на сайт — `icon_256x256` + `video_landscape_30s` / `video_square_1_1_30s` / `video_portrait_4_5_30s` / `video_portrait_9_16_30s` (`banner_patterns` 321–324, 509–512); в REST-клиенте форма по ролям для видео не реализована. Роли слайдов карусели не разобраны. Справочник `banner_patterns` — 642 шаблона, ~690 тыс. символов.
+- Без данных ОРД в кабинете — ошибка `ord_data_required`.
 
 ### Аудитории (`/audiences`)
 - `GET /audiences.json`, `POST /audiences.json`, `PUT /audiences/{id}.json`
@@ -168,8 +181,17 @@ grant_type=client_credentials&client_id={ID}&client_secret={SECRET}
 Метрики: `impressions`, `clicks`, `ctr`, `cpc`, `cost`/`spent` (рубли), `goals` (события пикселя), `cpa`, `video_views`.
 
 ### Файлы (`/content`)
-- `POST /content/static.json` — загрузка изображения → возвращает `id` для `banners.images`.
-- `POST /content/video.json` — загрузка видео → `id` для `banners.videos`.
+- `POST /content/static.json` — загрузка изображения → возвращает `id` для `content.<роль>.id` объявления.
+- `POST /content/video.json` — загрузка видео → `id` (роль видео в объявлении не подтверждена).
+
+### Пакеты размещения (`/packages`)
+- `GET /packages.json` — весь список (~180 пакетов) одним ответом, фильтр по `objective` на клиенте
+  (`client.packages.list(objective=...)`, CLI `python -m scripts.vk_ads_api packages --objective <цель>`).
+  ⚠️ В REST-клиенте вживую не проверено. `package_id` обязателен при создании группы.
+  Без пикселя с целью — пакет с оплатой за клики (`priced_event_type: 1`); oCPM (`30`) требует `priced_goal`.
+
+### Ссылки (`/urls`)
+- `POST /urls.json` с `{"url": "..."}` → `id` для `urls.primary.id` объявления. `GET` → 405.
 - `POST /content/html5.json` — HTML5-креатив.
 
 ⚠️ Общего `/content/upload.json` **не существует** — тип контента задаётся путём.
@@ -210,13 +232,17 @@ API нет, сохраняй возвращённые `id`.
 
 4. **Объявления (banners)** — 3-5 на группу, **вложенным массивом внутри группы**:
    ```http
-   POST /content/static.json      (картинка → image_id)
+   POST /content/static.json      (картинка → image_id; квадрат ровно 600×600)
+   POST /content/static.json      (логотип → logo_id, 256×256)
+   POST /urls.json  {"url":"https://сайт/?utm_source=vk"}   (→ url_id)
    POST /campaigns.json
-   {"ad_plan_id":12345,"name":"H1 — LAL 1%","status":"blocked", …,
+   {"ad_plan_id":12345,"package_id":<id>,"name":"H1 — LAL 1%","status":"blocked", …,
     "banners":[
-      {"format":"universal","title":"…","description":"…","url":"…",
-       "call_to_action":"learn_more","images":[{"id":"<image_id>"}],
-       "company_info":"ИП …, ИНН …","status":"blocked"}
+      {"name":"cr_v1","status":"blocked",
+       "urls":{"primary":{"id":<url_id>}},
+       "textblocks":{"title_40_vkads":{"text":"…"},"text_90":{"text":"…"},
+                     "cta_sites_full":{"text":"visitSite"}},
+       "content":{"icon_256x256":{"id":<logo_id>},"image_600x600":{"id":<image_id>}}}
     ]}
    ```
 
@@ -225,7 +251,9 @@ API нет, сохраняй возвращённые `id`.
    реализацией хостового сервера `vk-ads-mcp`, проверявшейся против ads.vk.com).
    Ресурс Banner поддерживает `GET`, `POST` по id (правка), `DELETE` и пакетный
    `POST /banners/remoderate.json`. «Долить» объявления в созданную группу нельзя:
-   группа без баннеров остаётся мёртвой с issue `NO_BANNERS_WITH_ACTIVE_STATUS`.
+   группа, созданная без баннеров, остаётся пустой — её пересоздают. Проверка залива —
+   `GET /banners.json?_campaign_id=<id группы>&fields=id,campaign_id`: провал = пустой список
+   (поле `banners` и issue `NO_BANNERS_WITH_ACTIVE_STATUS` у группы на паузе — не признак провала).
    В нашем клиенте `client.banners.create(...)` намеренно бросает ошибку с этим
    объяснением, а `create_campaign_tree` кладёт баннеры внутрь payload группы.
 
@@ -285,8 +313,12 @@ print(client.probe_schema())
 # Создание всего дерева сразу (всё в blocked)
 tree = client.create_campaign_tree(
     {"name": "Тест", "objective": "leads", "budget_limit_day": 4000, "bid_strategy": "minimal_price"},
-    [{"payload": {"name": "H1", "targetings": {...}, "placements": ["vk_feed"]},
-      "banners": [{"format": "universal", "title": "…", "url": "…", "company_info": "ИП …, ИНН …", "images": [{"id": 1}]}]}],
+    [{"payload": {"name": "H1", "package_id": 3232, "targetings": {...}},
+      "banners": [{"name": "cr_v1",
+                   "urls": {"primary": {"id": client.urls.register("https://сайт/")}},
+                   "textblocks": {"title_40_vkads": {"text": "…"}, "text_90": {"text": "…"},
+                                  "cta_sites_full": {"text": "visitSite"}},
+                   "content": {"icon_256x256": {"id": 111}, "image_600x600": {"id": 222}}}]}],
 )
 
 # Активация — по явному подтверждению, с ОРД-preflight
