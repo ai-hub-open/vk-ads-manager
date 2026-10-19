@@ -1,6 +1,6 @@
 # Подключение MCP-сервера «VK Реклама»
 
-Скилл работает с кабинетом через **хостовый MCP-сервер** организации: `https://vkads-mcp.aihub.click.ru/mcp` (код — <https://github.com/ai-hub-open/vk-ads-mcp>) — 45 инструментов: кампании, группы, объявления, аудитории, бюджеты, статистика. Локально ничего не запускается, Bun и клон репозитория не нужны.
+Скилл работает с кабинетом через **хостовый MCP-сервер** организации: `https://vkads-mcp.aihub.click.ru/mcp` (код — <https://github.com/ai-hub-open/vk-ads-mcp>) — 46 инструментов: кампании, группы, объявления, ссылки, аудитории, бюджеты, статистика. Локально ничего не запускается, Bun и клон репозитория не нужны.
 
 ## Подключение
 
@@ -31,9 +31,9 @@ python -m scripts.setup_vk_ads_mcp --token <CLICK_RU_TOKEN> --vk-account-id <ID>
 
 Вызов без кредов возвращает ошибку с перечнем нужных заголовков — по ней можно свериться, что шлюз жив.
 
-## Инструменты (45)
+## Инструменты (46)
 
-Снято с живого сервера 26.08.2026. Все имена с префиксом `vk_ads_`:
+Снято с живого сервера 26.08.2026, `vk_ads_urls_create` добавлен 16.10.2026. Все имена с префиксом `vk_ads_`:
 
 | Область | Инструменты |
 |---|---|
@@ -43,6 +43,7 @@ python -m scripts.setup_vk_ads_mcp --token <CLICK_RU_TOKEN> --vk-account-id <ID>
 | Те же группы под алиасом `ad_groups` | `vk_ads_ad_groups_list`, `vk_ads_ad_groups_get`, `vk_ads_ad_groups_create`, `vk_ads_ad_groups_update`, `vk_ads_ad_groups_delete` |
 | Объявления (API `banners`) | `vk_ads_banners_list`, `vk_ads_banners_get`, `vk_ads_banners_update`, `vk_ads_banners_remoderate`, `vk_ads_banners_delete` — **создания нет**, см. ниже |
 | Контент | `vk_ads_content_upload_image`, `vk_ads_content_upload_video` |
+| Ссылки | `vk_ads_urls_create` — регистрирует адрес сайта (`POST /urls.json`) и отдаёт `id`. Обычно не нужен: create-инструменты принимают адрес строкой и регистрируют сами |
 | Статистика | `vk_ads_statistics_day`, `vk_ads_statistics_summary` |
 | Ремаркетинг | `vk_ads_remarketing_segments_list/create/update/delete`, `vk_ads_remarketing_pixels_list/create/delete` |
 | Списки пользователей | `vk_ads_users_lists_list`, `vk_ads_users_lists_create`, `vk_ads_users_lists_upload_items`, `vk_ads_users_lists_delete` |
@@ -59,8 +60,33 @@ python -m scripts.setup_vk_ads_mcp --token <CLICK_RU_TOKEN> --vk-account-id <ID>
 `ad_plans_create` принимает вложенные `campaigns`, а `campaigns_create` принимает вложенные `banners`.
 Бюджеты в этих payload'ах (`budget_limit`, `budget_limit_day`) — **в рублях**: 500 ₽ = 500.
 
-Создать группу, а потом «долить» в неё объявления — **нельзя**. Группа без баннеров
-уходит в `status: blocked` с issue `NO_BANNERS_WITH_ACTIVE_STATUS` и остаётся мёртвой.
+Создать группу, а потом «долить» в неё объявления — **нельзя**. Группа, созданная без баннеров,
+остаётся пустой навсегда — её удаляют и пересоздают.
+
+**Форма объявления «на сайт» (сверено вживую через MCP, 10.2026):**
+
+```json
+{"name": "cr_v1", "status": "blocked",
+ "urls": {"primary": "https://сайт/?utm_source=vk"},
+ "textblocks": {"title_40_vkads": {"text": "Заголовок до 40"},
+                "text_90": {"text": "Текст до 90"},
+                "cta_sites_full": {"text": "visitSite"}},
+ "content": {"icon_256x256": {"id": <id логотипа>}, "image_600x600": {"id": <id картинки>}}}
+```
+
+- `urls.primary` — адрес строкой: MCP сам регистрирует ссылку и подставит `{"id": ...}`. В REST — сначала `POST /api/v2/urls.json` с `{"url": "..."}` (GET → 405), затем `{"primary": {"id": <url_id>}}`.
+- Старые поля `format` / `title` / `description` / `url` / `images` VK отвергает как неизвестные.
+- `image_600x600` принимает квадрат **ровно 600×600** — 1080×1080 отклоняется (живое наблюдение; в самих шаблонах размерных ограничений нет). Роли под квадрат 1080 нет (`banner_patterns`, 19.10.2026): `image_1080x1080` не существует.
+- **Справочник `banner_patterns`** (`vk_ads_dictionary_get(name="banner_patterns")`, проверено 19.10.2026) — 642 шаблона, ~690 тыс. символов: в чат не тянуть. Шаблоны объявления на сайт (VK Ads, активные): 514 `multiformat_square_site_vkads` — обязательны `primary` (url), `icon_256x256`, `title_40_vkads`, `text_90`, `cta_sites_full`, `image_600x600`; 513 `multiformat_landscape_site_vkads` — то же с `image_1080x607`; 515 `multiformat_portrait_site_vkads` — с `image_1080x1350`; 66 — портрет 9:16 с `image_607x1080`. Необязательные: `title_30_additional`, `text_long`, `about_company_115`. Значит, **логотип `icon_256x256` обязателен** во всех шаблонах сайта. Роли `image_1080x607` / `image_1080x1350` есть, но объявление с ними вживую ещё не создавалось; точный размер 1080×607 / 1080×1350 — по описанию MCP. `about_company_115` — необязательная роль, по умолчанию **не передавай**: данные ОРД VK берёт из настроек кабинета.
+- Видео на сайт (справка, скилл форму по ролям для видео не собирает): шаблоны 321–324 и 509–512 — `icon_256x256` + `video_landscape_30s` / `video_square_1_1_30s` / `video_portrait_4_5_30s` / `video_portrait_9_16_30s` (и `*_180s`). Карусель (548, 614–617) — роли слайдов в справочнике без имени, не разобраны.
+- Описание `vk_ads_dictionary_get` в MCP пока не упоминает `targetings_tree` и `banner_patterns` — оба имени рабочие.
+- Без данных ОРД в кабинете (ИНН и название рекламодателя) создание падает с `ord_data_required`, а атомарный `ad_plans_create` не создаёт ничего. Повторять бесполезно — сначала заполнить данные в кабинете.
+
+### Как проверить, что объявления залились
+
+Смотри **список объявлений группы**: `vk_ads_banners_list(campaign_id=<id группы>, fields="id,name,status,moderation_status")` (в API `campaign_id` = id группы). Провал — только пустой список.
+
+⚠️ Поле `banners` в `vk_ads_ad_groups_get` / `campaigns_get` у группы на паузе (`blocked`) **всегда пустое**, даже когда объявления есть, а issue `NO_BANNERS_WITH_ACTIVE_STATUS` у группы на паузе ожидаем. По ним залив не проверяй — будет ложная тревога.
 
 ### `campaigns` и `ad_groups` — одна сущность
 
@@ -78,7 +104,8 @@ python -m scripts.setup_vk_ads_mcp --token <CLICK_RU_TOKEN> --vk-account-id <ID>
 `vk_ads_campaigns_get(campaign_id=..., fields="id,name,status,issues")`
 
 Иначе пустой ответ читается как «с группой всё в порядке», хотя она может стоять
-с `ARCHIVED` или `NO_BANNERS_WITH_ACTIVE_STATUS`. Неизвестные имена в `fields`
+с `ARCHIVED` или `NO_BANNERS_WITH_ACTIVE_STATUS` (у **активной** группы это значит «нет живых
+объявлений»; у группы на паузе этот issue ожидаем — объявления проверяй через `banners_list`). Неизвестные имена в `fields`
 сервер молча игнорирует, ошибки не будет.
 
 В сессии агента имена могут выглядеть иначе (в одной среде — `mcp__vk-ads__vk_ads_auth_check` и т.п.) — ориентируйся по короткому имени.
@@ -93,9 +120,11 @@ python -m scripts.setup_vk_ads_mcp --token <CLICK_RU_TOKEN> --vk-account-id <ID>
 | Загрузка креативов (Шаг 11) | `vk_ads_content_upload_image` / `vk_ads_content_upload_video`, параметр `source_path_or_url` — **на хосте только публичный http(s)-URL**; локальные картинки выкладывай через мост KeepImage (`scripts/upload_creatives_to_storage.py`), см. ниже |
 | Залив кампании (Шаг 11, путь A) | `vk_ads_ad_plans_create` с nested `campaigns: [...]` → `banners: [...]` — один атомарный вызов. Либо `vk_ads_ad_plans_create` → `vk_ads_campaigns_create(ad_plan_id=..., banners=[...])` по одной группе за вызов. Отдельного создания баннера нет |
 | Пауза/запуск, бюджет (lifecycle) | `vk_ads_campaigns_set_status`, `vk_ads_campaigns_update`, `vk_ads_ad_plans_update` |
-| CRM-аудитории и пиксели | `vk_ads_users_lists_*`, `vk_ads_remarketing_pixels_*` |
-| Выбор пакета размещения (Шаг 11, обязателен) | `vk_ads_packages_list(objective=...)` → `id` активного пакета. Всего ~174 пакета, фильтруй по `objective`; значения — в `available_objectives` ответа |
+| CRM-аудитории и пиксели | `vk_ads_users_lists_*`; пиксель — только `vk_ads_remarketing_pixels_list` (`limit` ≤ 50) для `id`. Создаёт пиксель человек в кабинете (Сайты → Добавить пиксель): VK требует `url`, `email` и пароль от счётчика Top@Mail.ru, пароль в чате не спрашиваем — `vk_ads_remarketing_pixels_create` сам не вызывай |
+| Выбор пакета размещения (Шаг 11, обязателен) | `vk_ads_packages_list(objective=...)` → `id` активного пакета. Всего ~174 пакета, фильтруй по `objective`; значения — в `available_objectives` ответа. Нет пикселя с целью — пакет с оплатой за клики (`priced_event_type: 1`), среди них — мультиформат для сайта (`multiformat_all_cpc` в имени; 19.10.2026 это 3232, рядом есть резервный CPC 4844); oCPM (`30`) требует `priced_goal` от пикселя |
 | Резолв гео в `region_id` (Шаги 6.5, 11) | `vk_ads_regions_search(query="<город>")` → `items[].id` в `targetings.geo.regions` |
+| ID интересов (Шаг 6.5) | `vk_ads_dictionary_get(name="targetings_tree")` — ~71 тыс. символов, ключи `interests` и `interests_soc_dem`; ищи по `name` и `synonyms`, не печатай целиком; появится `vk_ads_interests_search` — через него по названию |
+| Проверка залива (Шаг 11) | `vk_ads_banners_list(campaign_id=<id группы>, fields="id,name,status,moderation_status")` — пустой список = провал |
 | Повторная модерация отклонённых | `vk_ads_banners_list(fields="id,user_can_request_remoderation")` → `vk_ads_banners_remoderate(banner_ids=[...])` |
 | Отчёты за период | `vk_ads_statistics_summary` (агрегат) / `vk_ads_statistics_day` (по дням). Оба требуют явный список `ids` — режима «по всему кабинету» нет, сначала `vk_ads_campaigns_list`. Асинхронных отчётов и разрезов в MCP нет |
 
@@ -111,7 +140,7 @@ python -m scripts.setup_vk_ads_mcp --token <CLICK_RU_TOKEN> --vk-account-id <ID>
 
 ## Ограничения хостового режима
 
-- **Локальные файлы недоступны.** `vk_ads_content_upload_image/video` на хосте принимают только публичный http(s)-URL (чтение файлов с диска сервера выключено, приватные сети блокируются как SSRF-защита). Картинки из `assets/images/` сначала выкладывай в хранилище **KeepImage** — `python -m scripts.upload_creatives_to_storage --workspace <path>` даёт публичные ссылки (`assets/storage_manifest.json`, живут ≤2 ч), их и передавай в `source_path_or_url`. Среда без запуска кода — MCP `storage_publish_image(data_base64=...)`. KeepImage хостит только картинки (PNG/JPEG/GIF/WebP) — **видео** заливай публичной ссылкой клиента или через путь B (`scripts/deploy_campaign.py` работает с локальными файлами). Правила к ссылкам, которые надо предъявлять клиенту, — в `references/vk-ads-specs.md` → «Требования к ссылкам на изображения от клиента». Подключение KeepImage — `docs/hosted-mcp-setup.md`.
+- **Локальные файлы недоступны.** `vk_ads_content_upload_image/video` на хосте принимают только публичный http(s)-URL (чтение файлов с диска сервера выключено, приватные сети блокируются как SSRF-защита). Картинки из `assets/images/` сначала выкладывай в хранилище **KeepImage** — `python -m scripts.upload_creatives_to_storage --workspace <path>` (токен click.ru `clickru`, спрашивается в онбординге) даёт публичные ссылки (`assets/storage_manifest.json`, живут ≤2 ч) и заодно ужимает квадраты больше 600 до 600×600; их и передавай в `source_path_or_url`. **base64 картинки модель в вызов не передаёт** (`data_base64` у `vk_ads_content_upload_image` и `storage_publish_image` — для приложений: 1080×1080 — сотни тысяч символов); допустимо разве что для крошечного файла до ~50 КБ (логотип 256×256). Нет токена или запуска кода — путь B, путь C или прямые публичные ссылки от пользователя. KeepImage хостит только картинки (PNG/JPEG/GIF/WebP) — **видео** заливай публичной ссылкой клиента или через путь B (`scripts/deploy_campaign.py` работает с локальными файлами). Правила к ссылкам, которые надо предъявлять клиенту, — в `references/vk-ads-specs.md` → «Требования к ссылкам на изображения от клиента». Подключение KeepImage — `docs/hosted-mcp-setup.md`.
 - Список ранее загруженных изображений/видео API не отдаёт — сохраняй ID из ответов загрузки.
 - Lookalike как отдельная сущность недоступен — используй сегменты, пиксели и списки пользователей.
 - У сервера нет встроенной точки подтверждения: вызов на изменение уходит в API сразу. Все сущности создавай в `status: "blocked"`; активация — только маркетологом в кабинете.
@@ -163,9 +192,16 @@ python -m scripts.setup_vk_ads_mcp --token <CLICK_RU_TOKEN> --vk-account-id <ID>
 403 дополнительно отдаёт `required_permission` — по нему видно, каких прав не хватает
 (например, `view_clients` для `vk_ads_agency_clients_list`).
 
-**Справочники.** `vk_ads_dictionary_get` рабочие имена: `currencies`, `countries`, `regions`.
+**Справочники.** `vk_ads_dictionary_get` рабочие имена: `currencies`, `countries`, `regions`,
+`targetings_tree`, `banner_patterns` (последние два проверены 19.10.2026; в описании инструмента их пока нет).
 Имена `interests`, `sectors`, `browsers`, `languages`, `os` отвечают 404 —
-не строй на них таргетинг. Для гео вместо полного дерева используй `vk_ads_regions_search`.
+не строй на них таргетинг. ID интересов бери из `targetings_tree`: ~71 тыс. символов, ключи `interests`
+(тематические, 364 узла) и `interests_soc_dem` (соцдем, 99 узлов); узел — `id`, `name`, `synonyms`,
+`no_checkbox` (заголовок категории), `children`. Ищи по `name` и `synonyms`, целиком не печатай (есть
+запуск кода — сохрани в файл и ищи скриптом); без запуска кода ответ может не поместиться — интересы
+словами и подбор в кабинете с пометкой о пропуске. В какое поле `targetings` уходят ID из
+`interests_soc_dem` — не проверено. Когда появится `vk_ads_interests_search` — поиск по
+названию через него. Для гео вместо полного дерева используй `vk_ads_regions_search`.
 
 ## Фолбеки
 

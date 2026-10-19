@@ -99,7 +99,9 @@
 3. Пауза/запуск **всей Кампании**: `vk_ads_ad_plans_update(ad_plan_id=..., payload={"status": "blocked"|"active"})`
    — ⚠️ у `ad_plan` метода `set_status` нет, только `update`.
 4. Группа стоит, хотя статус `active` → смотри `issues`: `AD_PLAN_STOPPED` (остановлен родитель),
-   `NO_MONEY` (нет средств), `NO_BANNERS_WITH_ACTIVE_STATUS` (нет живых объявлений).
+   `NO_MONEY` (нет средств), `NO_BANNERS_WITH_ACTIVE_STATUS` (нет живых объявлений). У группы **на паузе**
+   этот issue ожидаем, а поле `banners` всегда пустое — объявления смотри через
+   `vk_ads_banners_list(campaign_id=<id группы>)`.
 5. Лог
 
 **Для возобновления:**
@@ -159,8 +161,8 @@
 1. `vk_ads_banners_get(banner_id=...)` — текущая версия
 2. План: «Креатив X. Было: <текст>. Станет: <текст>. ОК?»
 3. После «ОК»:
-   - Если простая правка текста — `vk_ads_banners_update(banner_id=..., payload={"title": ..., "description": ...})`
-   - Если замена визуала — `vk_ads_content_upload_image(source_path_or_url=...)` → получить `id` → `vk_ads_banners_update` с новым `images`
+   - Если простая правка текста — `vk_ads_banners_update(banner_id=..., payload={"textblocks": {"title_40_vkads": {"text": ...}, "text_90": {"text": ...}}})` (роли и лимиты 40/90 — как при создании, `references/vk-ads-mcp-integration.md`; старые поля `title`/`description` VK не принимает)
+   - Если замена визуала — `vk_ads_content_upload_image(source_path_or_url=...)` → получить `id` → `vk_ads_banners_update` с `{"content": {"image_600x600": {"id": ...}}}`. Квадрат — ровно 600×600 (1080 роль отклоняет)
 4. **Важно:** после изменения креатив снова попадёт на модерацию (обычно 1-4 часа). Поясни это.
 5. `vk_ads_banners_get(banner_id=...)` — проверка
 6. Лог
@@ -182,7 +184,8 @@
 **Действия:**
 1. `vk_ads_campaigns_get(campaign_id=..., fields="id,name,targetings,status")` — текущий таргетинг **группы**.
 2. Уточнить что добавить/убрать. Новые города — сначала `vk_ads_regions_search`, `targetings.geo.regions`
-   принимает числовые id.
+   принимает числовые id. Новые интересы — ID из `vk_ads_dictionary_get(name="targetings_tree")`
+   (ищи ветку, дерево не печатай; появится `vk_ads_interests_search` — через него).
 3. План: «Группа X. Текущая аудитория: … Добавляю Z, исключаю W. ОК?»
 4. Проверить что новый размер > 50K (если меньше — алгоритм не сможет оптимизировать)
 5. После «ОК» — `vk_ads_campaigns_update(campaign_id=..., payload={"targetings": {...}})`
@@ -306,8 +309,9 @@
      "package_id": <тот же>, "ad_plan_id": <тот же>, "targetings": {...}, "status": "blocked",
      "banners": [ <копии креативов> ]})`
    - ⚠️ Объявления передаются **внутри** payload группы. Отдельного создания баннера нет,
-     «долить» в созданную группу невозможно — группа без `banners` навсегда останется пустой
-     (`issues: NO_BANNERS_WITH_ACTIVE_STATUS`) и её придётся удалять и пересоздавать.
+     «долить» в созданную группу невозможно — группа, созданная без `banners`, навсегда останется
+     пустой, её придётся удалять и пересоздавать. Проверка после создания — список объявлений группы
+     `vk_ads_banners_list(campaign_id=<id группы>)`: провал = пустой список.
    - ⚠️ `package_id` и `ad_plan_id` обязательны. Группа без `ad_plan_id` — «сирота», невидима в UI.
 3. Старую группу не удалять — `vk_ads_campaigns_set_status(campaign_id=..., status="blocked")`.
 4. Лог
@@ -327,7 +331,7 @@
      "campaigns": [{..., "package_id": ..., "targetings": {...}, "banners": [{...}]}]})`
    Пошаговая альтернатива, если payload слишком большой: `vk_ads_ad_plans_create` →
    `vk_ads_campaigns_create(payload={"ad_plan_id": <новый>, ..., "banners": [...]})` по одной группе.
-4. **Проверить непустой `banners`** у каждой новой группы. Пусто → залив провалился, не отдавать как успех.
+4. **Проверить объявления** каждой новой группы: `vk_ads_banners_list(campaign_id=<id группы>, fields="id,name,status,moderation_status")`. Пустой список → залив провалился, не отдавать как успех. Поле `banners` у группы на паузе всегда пустое и issue `NO_BANNERS_WITH_ACTIVE_STATUS` у неё ожидаем — по ним не суди.
 5. Не активировать. Лог.
 
 **Совет:** перед копированием спросить какие изменения нужны (другая география / другие тексты / другой бюджет). Иначе получишь точную копию.
@@ -345,7 +349,8 @@
 | Разрезы статистики (age / region / placement) | UI ads.vk.ru |
 | Асинхронные отчёты | Их нет; `statistics_summary` / `statistics_day` с явным `ids` |
 | Список ранее загруженного контента | Сохраняй `id` из ответов загрузки |
-| Справочники `interests`, `sectors`, `browsers`, `languages`, `os` | Отвечают 404 — не строй на них таргетинг |
+| Справочники `interests`, `sectors`, `browsers`, `languages`, `os` | Отвечают 404. ID интересов — из `targetings_tree` |
+| Создать пиксель (VK требует пароль от счётчика Top@Mail.ru) | Человек в кабинете: Сайты → Добавить пиксель; `id` — `vk_ads_remarketing_pixels_list` |
 | Локальные файлы в `content_upload_*` на хостовом сервере | Публичный http(s)-URL или путь B |
 | Проверить, что пиксель стреляет | Браузер / UI |
 | Авто-правила (если CPL > X — выключить) | Внешний скрипт на cron + API |

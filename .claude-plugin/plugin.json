@@ -1,6 +1,6 @@
 {
   "name": "vk-ads-manager",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "VK Реклама (ads.vk.ru) от брифа до залива и работы с активной кампанией: конкуренты, персоны, аудитории, УТП, прогноз, креативы, залив через MCP или API, мониторинг и оптимизация",
   "author": { "name": "ai-hub-open" },
   "homepage": "https://github.com/ai-hub-open/vk-ads-manager",

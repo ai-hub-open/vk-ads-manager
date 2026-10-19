@@ -106,6 +106,18 @@ def _ru_format_cta(cta: str) -> str:
     }.get(cta, cta)
 
 
+def _interests_text(items) -> str:
+    """Интересы словами: строка как есть, {"id", "name"} → «Название (id 123)»."""
+    out = []
+    for it in items or []:
+        if isinstance(it, dict):
+            name = it.get("name") or "?"
+            out.append(f"{name} (id {it['id']})" if it.get("id") is not None else name)
+        else:
+            out.append(str(it))
+    return ", ".join(out)
+
+
 def _audience_to_human(audience: dict) -> str:
     """Текстовое описание аудитории для оператора."""
     cfg = audience.get("config", {})
@@ -142,9 +154,9 @@ def _audience_to_human(audience: dict) -> str:
             lines.append(f"    • {c}")
 
     if "interests" in cfg:
-        lines.append(f"  - Интересы: {', '.join(cfg['interests'])}")
+        lines.append(f"  - Интересы: {_interests_text(cfg['interests'])}")
     if "additional_interests" in cfg:
-        lines.append(f"  - Доп. интересы: {', '.join(cfg['additional_interests'])}")
+        lines.append(f"  - Доп. интересы: {_interests_text(cfg['additional_interests'])}")
 
     if "position_filter" in cfg:
         lines.append(f"  - Должность в профиле VK: {', '.join(cfg['position_filter'])}")

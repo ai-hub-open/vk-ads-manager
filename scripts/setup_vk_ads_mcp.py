@@ -6,7 +6,7 @@ setup_vk_ads_mcp.py — подключает хостовый MCP «VK Рекл�
 (с бэкапом; существующие серверы сохраняются).
 
 Сервер:
-- vk-ads → https://vkads-mcp.aihub.click.ru/mcp (45 инструментов VK Ads API, имена vk_ads_*)
+- vk-ads → https://vkads-mcp.aihub.click.ru/mcp (46 инструментов VK Ads API, имена vk_ads_*)
 
 Авторизация (один из вариантов):
 A. Через click.ru (основной): --token <CLICK_RU_TOKEN> + --vk-account-id <ID>
@@ -379,7 +379,7 @@ def main(argv: list[str] | None = None) -> int:
         print("1. Claude Code: новая сессия подхватит .mcp.json автоматически.")
     print("2. Проверь связь: вызови vk_ads_auth_check — должен вернуть данные пользователя VK Ads.")
     if add_keepimage:
-        print("   KeepImage: инструмент storage_publish_image (или скрипт upload_creatives_to_storage.py) — заливка картинок.")
+        print("   KeepImage: скрипт upload_creatives_to_storage.py — заливка локальных картинок (токен clickru уже сохранён).")
     print("3. Ошибка «Не заданы креды» = не дошли заголовки; 401 — токен недействителен.")
     print()
     print("Справочник подключения: docs/hosted-mcp-setup.md")
