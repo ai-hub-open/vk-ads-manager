@@ -203,6 +203,11 @@ python -m scripts.setup_vk_ads_mcp --token <CLICK_RU_TOKEN> --vk-account-id <ID>
 `interests_soc_dem` — не проверено. Когда появится `vk_ads_interests_search` — поиск по
 названию через него. Для гео вместо полного дерева используй `vk_ads_regions_search`.
 
+**Форма `targetings` при создании групп** — `SKILL.md` Шаг 11 п.0.3 и `references/vk-ads-api.md`
+(сверено на живых группах): `age.age_list` по годам, `sex` строками, `interests` числами. Описание
+`vk_ads_ad_plans_create` / `vk_ads_campaigns_create` в MCP схемы `targetings` не даёт — на ошибке
+валидации документацию VK API в интернете не ищи, действуй по п.0.3.
+
 ## Фолбеки
 
 MCP недоступен → путь B (`scripts/deploy_campaign.py`, наш REST, нужен запуск кода и токен VK Ads) → путь C (ручной залив по `LAUNCH_GUIDE.md`). Выбор пути — Шаг 11 корневого `SKILL.md`; переход на B/C из-за среды помечай как пропуск в `launch_log.md`.

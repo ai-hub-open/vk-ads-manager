@@ -128,9 +128,9 @@ def _audience_to_human(audience: dict) -> str:
         lines.append(f"  - Возраст: {age[0]}–{age[1]}")
 
     sex = cfg.get("sex", [1, 2])
-    if sex == [1]:
+    if sex in ([1], ["male"], "male"):
         lines.append("  - Пол: мужчины")
-    elif sex == [2]:
+    elif sex in ([2], ["female"], "female"):
         lines.append("  - Пол: женщины")
     else:
         lines.append("  - Пол: оба")

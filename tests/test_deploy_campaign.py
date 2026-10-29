@@ -65,13 +65,49 @@ def test_extract_community_id(value, expected):
     assert dc._extract_community_id(value) == expected
 
 
-def test_audience_to_targeting_drops_unparsable_communities():
-    aud = {"id": "H1", "config": {"geo": "MSK", "age": [25, 40],
-                                  "community_ids_or_urls": [111, "222", "https://vk.com/x"]}}
+def test_audience_to_targeting_uses_live_shape():
+    """Форма как в живых группах: age.age_list по годам, sex строками."""
+    aud = {"id": "H1", "config": {"geo": "MSK", "age": [25, 28], "sex": "female"}}
     t = dc.audience_to_targeting(aud)
-    assert t["communities"] == [111, 222]
+    assert t["age"] == {"age_list": [25, 26, 27, 28], "expand": False}
+    assert t["sex"] == ["female"]
     assert t["geo"] == {"regions": [1]}
-    assert t["age"] == [25, 40]
+
+
+def test_audience_to_targeting_defaults_both_sexes():
+    t = dc.audience_to_targeting({"id": "H1", "config": {}})
+    assert t["sex"] == ["female", "male"]
+    assert t["age"]["age_list"][0] == 25 and t["age"]["age_list"][-1] == 45
+
+
+@pytest.mark.parametrize("value, expected", [
+    ([25, 45], list(range(25, 46))),
+    ([30, 31, 35], [30, 31, 35]),
+    (["18", "24"], list(range(18, 25))),
+])
+def test_age_list(value, expected):
+    assert dc.age_list(value) == expected
+
+
+@pytest.mark.parametrize("value, expected", [
+    (None, ["female", "male"]),
+    ("male", ["male"]),
+    (["Ж"], ["female"]),
+    (["male", "female"], ["female", "male"]),
+    ([1, 2], ["female", "male"]),
+])
+def test_sex_list(value, expected):
+    assert dc.sex_list(value) == expected
+
+
+def test_audience_to_targeting_skips_unverified_keys(capsys):
+    """Сообщества / доп. интересы / должности в API не проверены — не шлём, предупреждаем."""
+    aud = {"id": "H1", "config": {"community_ids_or_urls": [111],
+                                  "additional_interests": [5], "position_filter": ["CEO"]}}
+    t = dc.audience_to_targeting(aud)
+    assert not {"communities", "interest_categories", "positions"} & t.keys()
+    out = capsys.readouterr().out
+    assert "сообщества" in out and "должности" in out
 
 
 # ---------- payload объявления ----------

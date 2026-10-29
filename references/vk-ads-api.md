@@ -107,17 +107,30 @@ grant_type=client_credentials&client_id={ID}&client_secret={SECRET}
   "status": "blocked|active",
   "budget_limit_day": 2000,
   "targetings": {
-    "age": [25, 45],
-    "sex": [1, 2],
-    "geo": {"regions": [1, 2]},
-    "interests": ["smm", "marketing"],
-    "lookalike_audience_ids": [54321],
-    "custom_audience_ids": [],
-    "key_phrases": []
-  },
-  "placements": ["vk_feed", "vk_clips", "ok_feed"]
+    "age": {"age_list": [25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45], "expand": false},
+    "sex": ["female", "male"],
+    "geo": {"regions": [188, -53]},
+    "interests": [10269],
+    "segments": [4954274],
+    "group_members": "all"
+  }
 }
 ```
+
+**Форма `targetings` — сверена вживую** (16.10.2026, 135 групп боевого кабинета, `vk_ads_campaigns_list(fields="targetings")`):
+
+| Поле | Форма | Чего НЕ слать |
+|---|---|---|
+| `age` | `{"age_list": [25, 26, …, 45], "expand": false}` — **каждый год отдельно** | `[25, 45]` как диапазон |
+| `sex` | `["female", "male"]`, `["male"]`, `["female"]` | числа `1` / `2` |
+| `geo` | `{"regions": [id, …]}` — id из `vk_ads_regions_search`; отрицательный id = исключение | названия городов |
+| `interests` | `[7301, 10269]` — числа из `targetings_tree` | строки `"smm"` |
+| `segments` | `[id]` — аудитории (списки, LAL, ретаргет) из кабинета | `lookalike_audience_ids`, `custom_audience_ids` |
+| `group_members` | `"all"` / `"not_group_member"` | — |
+| `pads`, `fulltime` | места размещения и расписание — VK ставит сам по пакету; **не передавай** | — |
+
+Других ключей в живых группах не было: `interests_soc_dem`, сообщества, ключевые фразы при создании — **не проверены**,
+их не придумывай: подбор в кабинете, пометка в `launch_log.md`.
 
 ### Объявления — `/banners` (UI «Объявление»)
 Ребёнок Группы — обязателен `campaign_id` (НЕ `ad_plan_id`).
@@ -226,8 +239,8 @@ API нет, сохраняй возвращённые `id`.
    POST /campaigns.json
    {"ad_plan_id":12345,"name":"H1 — LAL 1%","status":"blocked",
     "budget_limit_day":2000,
-    "targetings":{"lookalike_audience_ids":[54321],"age":[25,45],"sex":[1,2],"geo":{"regions":[1]}},
-    "placements":["vk_feed","vk_clips"]}
+    "targetings":{"segments":[54321],"age":{"age_list":[25,26,…,45],"expand":false},
+                  "sex":["female","male"],"geo":{"regions":[1]}}}
    ```
 
 4. **Объявления (banners)** — 3-5 на группу, **вложенным массивом внутри группы**:
