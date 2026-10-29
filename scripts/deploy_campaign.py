@@ -154,19 +154,49 @@ def load_ad_plan_config(workspace: Path) -> dict:
 
 def audience_to_targeting(audience: dict) -> dict:
     cfg = audience.get("config", {})
-    age = cfg.get("age", [25, 45])
-    targeting = {"age": age, "sex": [1, 2]}
+    targeting = {"age": {"age_list": age_list(cfg.get("age", [25, 45])), "expand": False},
+                 "sex": sex_list(cfg.get("sex"))}
     targeting["geo"] = _geo_to_regions(cfg.get("geo", ""))
-    if "community_ids_or_urls" in cfg:
-        comm_ids = [_extract_community_id(x) for x in cfg["community_ids_or_urls"]]
-        targeting["communities"] = [c for c in comm_ids if c]
     if "interests" in cfg:
         targeting["interests"] = interest_ids(cfg["interests"])
-    if "additional_interests" in cfg:
-        targeting["interest_categories"] = interest_ids(cfg["additional_interests"])
-    if "position_filter" in cfg:
-        targeting["positions"] = cfg["position_filter"]
+    # Сообщества, доп. интересы и должности в живых группах не встречались — поле в API не
+    # проверено, а неизвестный ключ VK отклоняет. Не шлём: подбор в кабинете.
+    for key, what in UNVERIFIED_TARGETING_KEYS.items():
+        if cfg.get(key):
+            print(f"  ⚠ {audience.get('id', '?')}: {what} — поле API не проверено, в залив не уйдёт; "
+                  f"добавьте в кабинете после залива")
     return targeting
+
+
+UNVERIFIED_TARGETING_KEYS = {
+    "community_ids_or_urls": "сообщества",
+    "additional_interests": "дополнительные интересы",
+    "position_filter": "должности",
+}
+
+
+def age_list(age) -> list:
+    """Возраст для API — `age.age_list`, список отдельных лет, а не диапазон [от, до].
+
+    В audiences.json возраст — пара [от, до] (25–45 → 25, 26, …, 45); длиннее пары — уже
+    список лет. Форма сверена с живыми группами (аудит 16.10.2026, 135 групп).
+    """
+    ages = [int(a) for a in age]
+    if len(ages) == 2 and ages[0] < ages[1]:
+        return list(range(ages[0], ages[1] + 1))
+    return sorted(set(ages))
+
+
+SEX_VALUES = {"male": "male", "female": "female", "m": "male", "f": "female",
+              "м": "male", "ж": "female", "муж": "male", "жен": "female"}
+
+
+def sex_list(sex) -> list:
+    """Пол для API — список строк `male` / `female` (не числа 1/2). Не задан — оба."""
+    items = sex if isinstance(sex, list) else [sex]
+    out = {SEX_VALUES[str(s).strip().lower()] for s in items
+           if str(s).strip().lower() in SEX_VALUES}
+    return sorted(out) or ["female", "male"]
 
 
 def interest_ids(items) -> list:
