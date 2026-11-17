@@ -83,7 +83,7 @@ Defaults в `scripts/brand_defaults.json`. Локальный `brand.json` им�
 
 ```bash
 python -m scripts.generate_creative_images \
-  --workspace C:\Users\ptica\Documents\Claude\Projects\FB\vk-campaign-<slug> \
+  --workspace <outputs>/vk-campaign-<slug> \
   --dry-run
 ```
 
@@ -94,7 +94,7 @@ python -m scripts.generate_creative_images \
 ```bash
 export OPENAI_API_KEY=sk-...
 python -m scripts.generate_creative_images \
-  --workspace C:\Users\ptica\Documents\Claude\Projects\FB\vk-campaign-<slug> \
+  --workspace <outputs>/vk-campaign-<slug> \
   --only cr_pain_p2_static \
   --model gpt-image-1
 ```
@@ -105,7 +105,7 @@ python -m scripts.generate_creative_images \
 
 ```bash
 python -m scripts.generate_creative_images \
-  --workspace C:\Users\ptica\Documents\Claude\Projects\FB\vk-campaign-<slug>
+  --workspace <outputs>/vk-campaign-<slug>
 ```
 
 Для 7 креативов с одной каруселью на 4 карточки = ~10 картинок ≈ $0.40-0.80.
