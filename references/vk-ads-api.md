@@ -92,8 +92,9 @@ grant_type=client_credentials&client_id={ID}&client_secret={SECRET}
 - `objective` — значение из `available_objectives` (`vk_ads_packages_list` / `GET /packages.json`), которое есть в
   `objective` пакета групп: `site_conversions`, `leadads`, `socialengagement`… Та же цель — **у каждой группы**.
   `leads`, `conversions`, `traffic`, `reach` — не цели VK.
-- Бюджет кампании — **один**: `budget_limit` (на всё время) или `budget_limit_day` (на день); оба —
-  «Can't set both budget_limit and budget_limit_day». Даты не обязательны.
+- Бюджет кампании — **только общий** `budget_limit` (на всё время), дневной — `budget_limit_day` у групп. Оба у
+  кампании — «Can't set both budget_limit and budget_limit_day»; один дневной у кампании VK требует повторить в
+  каждой группе — иначе у групп «budget_limit_day: Unallowed value». Даты не обязательны.
 - Стратегия — у групп: `"autobidding_mode": "max_goals"`, единственное значение, которое VK принимает на запись
   (`second_price_mean`, `second_price`, `fixed` — «Unallowed value»). У кампании `autobidding_mode` не передавай:
   там он включает распределение бюджета кампанией, вживую не проверено. Поля `bid_strategy` в API нет.
@@ -353,7 +354,7 @@ print(client.probe_schema())
 # Создание всего дерева сразу (всё в blocked).
 # ⚠️ 0.7.12: клиент шлёт кампанию без групп — VK откажет, см. «Известная ошибка клиента» выше.
 tree = client.create_campaign_tree(
-    {"name": "Тест", "objective": "site_conversions", "budget_limit_day": 4000},
+    {"name": "Тест", "objective": "site_conversions", "budget_limit": 30000},
     [{"payload": {"name": "H1", "objective": "site_conversions", "package_id": 3232,
                   "budget_limit_day": 1000, "autobidding_mode": "max_goals", "targetings": {...}},
       "banners": [{"name": "cr_v1",

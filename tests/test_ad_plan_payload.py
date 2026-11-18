@@ -66,8 +66,9 @@ def test_sample_plan_has_name_objective_one_budget_and_groups():
     assert plan["name"]
     assert plan["status"] == "blocked"
     assert plan["objective"] in VK_OBJECTIVES
-    budgets = [k for k in ("budget_limit", "budget_limit_day") if k in plan]
-    assert len(budgets) == 1, "Can't set both budget_limit and budget_limit_day"
+    assert plan["budget_limit"] > 0, "у кампании — общий бюджет"
+    assert "budget_limit_day" not in plan, (
+        "Can't set both budget_limit and budget_limit_day; дневной у кампании — budget_limit_day: Unallowed value у групп")
     assert plan["campaigns"], "campaigns: Empty value — кампанию без групп VK не создаёт"
     assert "package_id" not in plan and "targetings" not in plan
     assert "autobidding_mode" not in plan, "у кампании он включает распределение бюджета кампанией"
@@ -119,10 +120,27 @@ def test_step11_names_each_vk_refusal():
         "At least one pattern must be in package's settings",
         "campaigns: Empty value",
         "Maximum width is 256",
+        "budget_limit_day: Unallowed value",
     ):
         assert phrase in step11, phrase
     assert '`"autobidding_mode": "max_goals"` у каждой группы' in step11
     assert "1 ₽ за клик" in step11
+    assert "Перед вызовом сверь payload по списку" in step11
+    assert "`patterns` в payload не добавляй никогда" in step11
+
+
+def test_logo_is_required_and_never_a_placeholder():
+    """Прогон робота 18.11.2026: агент услышал «логотипа нет», пошёл без него, потом нарисовал заглушку."""
+    skill = _flat(SKILL.read_text(encoding="utf-8"))
+    assert "от 256×256" not in skill, "VK принимает логотип не шире 256 px, а не «от 256»"
+    i = skill.index("## Шаг 2. Сбор визуала")
+    step2 = skill[i:skill.index("## Шаг 3.", i)]
+    for phrase in ("**Логотип — обязателен.**", "256×256", "Не рисуй и не подставляй заглушку", "placehold.co"):
+        assert phrase in step2, phrase
+    step11 = _flat(_step11())
+    assert "заглушку не подставляй" in step11
+    quick = _flat((REPO_ROOT / "references" / "quick-launch.md").read_text(encoding="utf-8"))
+    assert "Логотип — квадрат 256×256" in quick
 
 
 def test_step11_does_not_create_plan_without_groups():
@@ -142,6 +160,7 @@ def test_mcp_reference_has_refusal_table():
         "At least one pattern must be in package's settings",
         "Maximum width is 256",
         "campaigns: Empty value",
+        "budget_limit_day: Unallowed value",
     ):
         assert phrase in ref, phrase
     for code in CTA_SITES:

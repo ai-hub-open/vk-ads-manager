@@ -62,7 +62,8 @@ python -m scripts.setup_vk_ads_mcp --token <CLICK_RU_TOKEN> --vk-account-id <ID>
 Бюджеты в этих payload'ах (`budget_limit`, `budget_limit_day`) — **в рублях**: 500 ₽ = 500.
 
 **Полный образец payload `vk_ads_ad_plans_create` — `SKILL.md`, Шаг 11, п. 3**, сверен вживую. Коротко:
-- кампания — `name`, `status: "blocked"`, `objective`, **один** бюджет: `budget_limit` или `budget_limit_day`;
+- кампания — `name`, `status: "blocked"`, `objective`, **только общий** бюджет `budget_limit` (дневной у кампании
+  требует того же дневного у каждой группы — «budget_limit_day: Unallowed value»);
 - группа — `name`, `status: "blocked"`, та же `objective`, `package_id`, `budget_limit_day`,
   `"autobidding_mode": "max_goals"`, `targetings`, `banners`;
 - объявление — `name`, `status`, `urls`, `textblocks`, `content` по ролям, без `patterns`;
@@ -106,13 +107,14 @@ python -m scripts.setup_vk_ads_mcp --token <CLICK_RU_TOKEN> --vk-account-id <ID>
 
 | Ответ VK | Причина | Что исправить |
 |---|---|---|
-| `Can't set both budget_limit and budget_limit_day` | у кампании оба бюджета | у кампании оставь один; дневной — `budget_limit_day` групп |
+| `Can't set both budget_limit and budget_limit_day` | у кампании оба бюджета | у кампании оставь общий `budget_limit`; дневной — `budget_limit_day` групп |
+| `budget_limit_day: Unallowed value` у групп | у кампании дневной бюджет, у групп — другой | у кампании — только общий `budget_limit`, дневной — у групп |
 | `Objective differ with ad_plan objective` | у кампании нет `objective` или цель группы другая | одна и та же `objective` у кампании и у каждой группы |
 | `objective: Empty value` | у группы нет `objective` | `objective` кампании — в группу |
 | `autobidding_mode: Unallowed value` | стратегия, которую VK на запись не принимает (`second_price_mean`, `second_price`, `fixed`) | у группы `"autobidding_mode": "max_goals"`; `price` и `max_price` убери |
 | `Unknown fields: patterns` | в объявлении поле шаблона (`patterns`, `settings`, `content_settings`) | убери поле; шаблон VK подбирает по ролям |
-| `At least one pattern must be in package's settings` | набор ролей не подошёл ни к одному шаблону пакета; чаще всего нет `icon_256x256` | добавь недостающую роль по образцу; `patterns` не добавляй |
-| `icon_256x256: Maximum width is 256` | логотип шире 256 px | загрузи логотип 256×256 и подставь его `id` |
+| `At least one pattern must be in package's settings` | набор ролей не подошёл ни к одному шаблону пакета; чаще всего нет `icon_256x256` | добавь недостающую роль по образцу; номера шаблонов в ответе — не поле, `patterns` не добавляй; логотипа нет — попроси его, заглушку не подставляй |
+| `icon_256x256: Maximum width is 256` | логотип шире 256 px | загрузи логотип пользователя 256×256 и подставь его `id`; не картинку объявления и не заглушку |
 | `cta_sites_full … Unallowed value` | код кнопки не из списка | код из `allowed_values` ответа (список выше) |
 | `text_90 … String is too long` (`max_length`) | текст длиннее лимита роли | не режь — переспроси текст у пользователя |
 | `age … Unknown fields: to, from`, `Resource data must be an object`, `Unknown fields: age_list` | возраст не в форме `age.age_list` | SKILL.md, Шаг 11, п. 0.3 |
