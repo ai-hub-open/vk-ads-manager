@@ -94,9 +94,9 @@ grant_type=client_credentials&client_id={ID}&client_secret={SECRET}
   `leads`, `conversions`, `traffic`, `reach` — не цели VK.
 - Бюджет кампании — **один**: `budget_limit` (на всё время) или `budget_limit_day` (на день); оба —
   «Can't set both budget_limit and budget_limit_day». Даты не обязательны.
-- Стратегию (`autobidding_mode`) и ставку (`price`, `max_price`) при создании не передавай: VK выставит их по
-  пакету. На запись VK принимает только `autobidding_mode: max_goals`; `second_price_mean`, `second_price`,
-  `fixed` — «Unallowed value». Поля `bid_strategy` в API нет.
+- Стратегия — у групп: `"autobidding_mode": "max_goals"`, единственное значение, которое VK принимает на запись
+  (`second_price_mean`, `second_price`, `fixed` — «Unallowed value»). У кампании `autobidding_mode` не передавай:
+  там он включает распределение бюджета кампанией, вживую не проверено. Поля `bid_strategy` в API нет.
 
 ### Группы объявлений — `/campaigns` (UI «Группа»)
 Ребёнок Кампании — обязателен `ad_plan_id`, иначе orphan.
@@ -107,8 +107,9 @@ grant_type=client_credentials&client_id={ID}&client_secret={SECRET}
 - `PUT /campaigns/{id}.json`
 
 У группы обязательны `package_id` и та же `objective`, что у кампании («Objective differ with ad_plan objective»,
-«objective: Empty value»). Дневной бюджет — `budget_limit_day` группы. `autobidding_mode`, `price`, `max_price`
-при создании не передаются (см. AdPlan выше).
+«objective: Empty value»). Дневной бюджет — `budget_limit_day` группы. Стратегия — `"autobidding_mode": "max_goals"`:
+ставку VK подбирает сам в пределах дневного бюджета. Без неё VK ставит фиксированную ставку по цене пакета (1 ₽ за
+клик на 3232, сверено 18.11.2026), и группа почти не показывается. `price` и `max_price` не передаются.
 
 **Объект Campaign (Группа):**
 ```json
@@ -120,6 +121,7 @@ grant_type=client_credentials&client_id={ID}&client_secret={SECRET}
   "objective": "site_conversions",
   "package_id": 3232,
   "budget_limit_day": 2000,
+  "autobidding_mode": "max_goals",
   "targetings": {
     "age": {"age_list": [25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45], "expand": false},
     "sex": ["female", "male"],
@@ -256,7 +258,7 @@ API нет, сохраняй возвращённые `id`.
    {"name":"…","status":"blocked","objective":"site_conversions","budget_limit":50000,
     "campaigns":[
       {"name":"H1 — LAL 1%","status":"blocked","objective":"site_conversions","package_id":<id>,
-       "budget_limit_day":2000,
+       "budget_limit_day":2000,"autobidding_mode":"max_goals",
        "targetings":{"segments":[54321],"age":{"age_list":[25,26,…,45],"expand":false},
                      "sex":["female","male"],"geo":{"regions":[1]}},
        "banners":[
@@ -269,14 +271,14 @@ API нет, сохраняй возвращённые `id`.
     ]}
    ```
    Ответ — `{"id": <ad_plan_id>, "campaigns": [{"id": <id группы>}, …]}`. У кампании один бюджет, у групп та же
-   `objective`; `autobidding_mode`, `price`, `max_price` не передаются. Отказы и что исправить — таблица
-   «Отказы VK при создании» в `references/vk-ads-mcp-integration.md`.
+   `objective` и `autobidding_mode: max_goals`; `price` и `max_price` не передаются. Отказы и что исправить —
+   таблица «Отказы VK при создании» в `references/vk-ads-mcp-integration.md`.
 
 4. **Группы сверх первой** (если одним запросом payload слишком большой) — по одной, с `ad_plan_id`:
    ```http
    POST /campaigns.json
    {"ad_plan_id":12345,"name":"H2 — интересы","status":"blocked","objective":"site_conversions",
-    "package_id":<id>,"budget_limit_day":1500,"targetings":{…},"banners":[…]}
+    "package_id":<id>,"budget_limit_day":1500,"autobidding_mode":"max_goals","targetings":{…},"banners":[…]}
    ```
 
    🚨 **Отдельного `POST /banners.json` в API нет** — он отвечает
@@ -353,7 +355,7 @@ print(client.probe_schema())
 tree = client.create_campaign_tree(
     {"name": "Тест", "objective": "site_conversions", "budget_limit_day": 4000},
     [{"payload": {"name": "H1", "objective": "site_conversions", "package_id": 3232,
-                  "budget_limit_day": 1000, "targetings": {...}},
+                  "budget_limit_day": 1000, "autobidding_mode": "max_goals", "targetings": {...}},
       "banners": [{"name": "cr_v1",
                    "urls": {"primary": {"id": client.urls.register("https://сайт/")}},
                    "textblocks": {"title_40_vkads": {"text": "…"}, "text_90": {"text": "…"},

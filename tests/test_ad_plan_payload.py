@@ -4,7 +4,8 @@
 собирал payload по образцам скилла, а они задавали кампании оба бюджета, держали `objective` только на
 уровне кампании (с целями `leads|conversions`, которых у VK нет), советовали создать кампанию без групп,
 ничего не говорили про `autobidding_mode` и не запрещали `patterns` в объявлении. Каждая проверка ниже —
-отказ VK с живых заливов.
+отказ VK с живых заливов. Стратегия группы — `max_goals`: 18.11.2026 VK принял её при создании на CPC-пакете
+3232, а без неё поставил фиксированную ставку 1 ₽ за клик (цена пакета).
 """
 from __future__ import annotations
 
@@ -26,8 +27,7 @@ CTA_SITES = {
     "try", "contactUs", "listen", "watch", "create", "learn", "takeSurvey", "startTest",
 }
 BANNER_KEYS = {"name", "status", "urls", "textblocks", "content"}
-NEVER_ON_CREATE = {"autobidding_mode", "price", "max_price", "bid_strategy", "patterns", "settings",
-                   "content_settings"}
+NEVER_ON_CREATE = {"price", "max_price", "bid_strategy", "patterns", "settings", "content_settings"}
 
 
 def _step11() -> str:
@@ -70,6 +70,7 @@ def test_sample_plan_has_name_objective_one_budget_and_groups():
     assert len(budgets) == 1, "Can't set both budget_limit and budget_limit_day"
     assert plan["campaigns"], "campaigns: Empty value — кампанию без групп VK не создаёт"
     assert "package_id" not in plan and "targetings" not in plan
+    assert "autobidding_mode" not in plan, "у кампании он включает распределение бюджета кампанией"
 
 
 def test_sample_groups_share_objective_and_carry_package_budget_targetings():
@@ -79,6 +80,7 @@ def test_sample_groups_share_objective_and_carry_package_budget_targetings():
         assert group["objective"] == plan["objective"], "Objective differ with ad_plan objective"
         assert isinstance(group["package_id"], int)
         assert group["budget_limit_day"] > 0
+        assert group["autobidding_mode"] == "max_goals", "без стратегии VK ставит fixed по цене пакета"
         t = group["targetings"]
         ages = t["age"]["age_list"]
         assert ages == list(range(ages[0], ages[-1] + 1)), "возраст — каждый год отдельно"
@@ -119,7 +121,8 @@ def test_step11_names_each_vk_refusal():
         "Maximum width is 256",
     ):
         assert phrase in step11, phrase
-    assert "Стратегию и ставку не передавай" in step11
+    assert '`"autobidding_mode": "max_goals"` у каждой группы' in step11
+    assert "1 ₽ за клик" in step11
 
 
 def test_step11_does_not_create_plan_without_groups():

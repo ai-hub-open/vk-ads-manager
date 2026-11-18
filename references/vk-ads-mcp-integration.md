@@ -63,9 +63,12 @@ python -m scripts.setup_vk_ads_mcp --token <CLICK_RU_TOKEN> --vk-account-id <ID>
 
 **Полный образец payload `vk_ads_ad_plans_create` — `SKILL.md`, Шаг 11, п. 3**, сверен вживую. Коротко:
 - кампания — `name`, `status: "blocked"`, `objective`, **один** бюджет: `budget_limit` или `budget_limit_day`;
-- группа — `name`, `status: "blocked"`, та же `objective`, `package_id`, `budget_limit_day`, `targetings`, `banners`;
+- группа — `name`, `status: "blocked"`, та же `objective`, `package_id`, `budget_limit_day`,
+  `"autobidding_mode": "max_goals"`, `targetings`, `banners`;
 - объявление — `name`, `status`, `urls`, `textblocks`, `content` по ролям, без `patterns`;
-- `autobidding_mode`, `price`, `max_price` при создании не передаются: VK выставляет стратегию по пакету.
+- стратегия — только `max_goals` у группы: VK сам подбирает ставку в пределах дневного бюджета. Без поля VK
+  ставит фиксированную ставку по цене пакета (1 ₽ за клик на 3232, сверено 18.11.2026) — после запуска группа
+  почти не показывается. `price` и `max_price` не передаются, у кампании `autobidding_mode` нет.
 
 Описание `vk_ads_ad_plans_create` на сервере (`a03be316`) говорит «Обязательно: name» и предлагает привязать
 группы позже — так VK не принимает: нужны `objective` и хотя бы одна группа. Собирай по образцу `SKILL.md`.
@@ -106,7 +109,7 @@ python -m scripts.setup_vk_ads_mcp --token <CLICK_RU_TOKEN> --vk-account-id <ID>
 | `Can't set both budget_limit and budget_limit_day` | у кампании оба бюджета | у кампании оставь один; дневной — `budget_limit_day` групп |
 | `Objective differ with ad_plan objective` | у кампании нет `objective` или цель группы другая | одна и та же `objective` у кампании и у каждой группы |
 | `objective: Empty value` | у группы нет `objective` | `objective` кампании — в группу |
-| `autobidding_mode: Unallowed value` | стратегия, которую VK на запись не принимает (`second_price_mean`, `second_price`, `fixed`) | убери `autobidding_mode`, `price` и `max_price` |
+| `autobidding_mode: Unallowed value` | стратегия, которую VK на запись не принимает (`second_price_mean`, `second_price`, `fixed`) | у группы `"autobidding_mode": "max_goals"`; `price` и `max_price` убери |
 | `Unknown fields: patterns` | в объявлении поле шаблона (`patterns`, `settings`, `content_settings`) | убери поле; шаблон VK подбирает по ролям |
 | `At least one pattern must be in package's settings` | набор ролей не подошёл ни к одному шаблону пакета; чаще всего нет `icon_256x256` | добавь недостающую роль по образцу; `patterns` не добавляй |
 | `icon_256x256: Maximum width is 256` | логотип шире 256 px | загрузи логотип 256×256 и подставь его `id` |
