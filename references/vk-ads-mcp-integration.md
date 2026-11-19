@@ -58,7 +58,21 @@ python -m scripts.setup_vk_ads_mcp --token <CLICK_RU_TOKEN> --vk-account-id <ID>
 
 Либо целиком атомарно: `vk_ads_ad_plans_create(payload={..., "campaigns": [{..., "banners": [...]}]})` —
 `ad_plans_create` принимает вложенные `campaigns`, а `campaigns_create` принимает вложенные `banners`.
+Кампанию без групп VK не создаёт («campaigns: Empty value»): в `campaigns` — хотя бы одна группа.
 Бюджеты в этих payload'ах (`budget_limit`, `budget_limit_day`) — **в рублях**: 500 ₽ = 500.
+
+**Полный образец payload `vk_ads_ad_plans_create` — `SKILL.md`, Шаг 11, п. 3**, сверен вживую. Коротко:
+- кампания — `name`, `status: "blocked"`, `objective`, **только общий** бюджет `budget_limit` (дневной у кампании
+  требует того же дневного у каждой группы — «budget_limit_day: Unallowed value»);
+- группа — `name`, `status: "blocked"`, та же `objective`, `package_id`, `budget_limit_day`,
+  `"autobidding_mode": "max_goals"`, `targetings`, `banners`;
+- объявление — `name`, `status`, `urls`, `textblocks`, `content` по ролям, без `patterns`;
+- стратегия — только `max_goals` у группы: VK сам подбирает ставку в пределах дневного бюджета. Без поля VK
+  ставит фиксированную ставку по цене пакета (1 ₽ за клик на 3232, сверено 18.11.2026) — после запуска группа
+  почти не показывается. `price` и `max_price` не передаются, у кампании `autobidding_mode` нет.
+
+Описание `vk_ads_ad_plans_create` на сервере (`a03be316`) говорит «Обязательно: name» и предлагает привязать
+группы позже — так VK не принимает: нужны `objective` и хотя бы одна группа. Собирай по образцу `SKILL.md`.
 
 Создать группу, а потом «долить» в неё объявления — **нельзя**. Группа, созданная без баннеров,
 остаётся пустой навсегда — её удаляют и пересоздают.
@@ -75,12 +89,40 @@ python -m scripts.setup_vk_ads_mcp --token <CLICK_RU_TOKEN> --vk-account-id <ID>
 ```
 
 - `urls.primary` — адрес строкой: MCP сам регистрирует ссылку и подставит `{"id": ...}`. В REST — сначала `POST /api/v2/urls.json` с `{"url": "..."}` (GET → 405), затем `{"primary": {"id": <url_id>}}`.
-- Старые поля `format` / `title` / `description` / `url` / `images` VK отвергает как неизвестные.
+- Старые поля `format` / `title` / `description` / `url` / `images` VK отвергает как неизвестные. `patterns`, `settings`, `content_settings` при создании тоже не передаются («Unknown fields: patterns»): шаблон задаёт пакет, VK подбирает его по набору ролей.
+- `cta_sites_full` — код кнопки только из списка VK (`allowed_values` в ответе VK, 17.11.2026): `visitSite`, `register`, `signUp`, `learnMore`, `order`, `buy`, `buy_ticket`, `book`, `enroll`, `apply`, `contactUs`, `call`, `get`, `try`, `download`, `open`, `begin`, `choose`, `to_shop`, `see_menu`, `playGame`, `listen`, `watch`, `create`, `learn`, `takeSurvey`, `startTest`. `registration` в нём нет.
+- `icon_256x256` — логотип не шире 256 px: 384 px VK отклонил («Maximum width is 256»). Ширину загруженного файла показывает ответ `vk_ads_content_upload_image` — `variants.original.width`.
 - `image_600x600` принимает квадрат **ровно 600×600** — 1080×1080 отклоняется (живое наблюдение; в самих шаблонах размерных ограничений нет). Роли под квадрат 1080 нет (`banner_patterns`, 19.10.2026): `image_1080x1080` не существует.
-- **Справочник `banner_patterns`** (`vk_ads_dictionary_get(name="banner_patterns")`, проверено 19.10.2026) — 642 шаблона, ~690 тыс. символов: в чат не тянуть. Шаблоны объявления на сайт (VK Ads, активные): 514 `multiformat_square_site_vkads` — обязательны `primary` (url), `icon_256x256`, `title_40_vkads`, `text_90`, `cta_sites_full`, `image_600x600`; 513 `multiformat_landscape_site_vkads` — то же с `image_1080x607`; 515 `multiformat_portrait_site_vkads` — с `image_1080x1350`; 66 — портрет 9:16 с `image_607x1080`. Необязательные: `title_30_additional`, `text_long`, `about_company_115`. Значит, **логотип `icon_256x256` обязателен** во всех шаблонах сайта. Роли `image_1080x607` / `image_1080x1350` есть, но объявление с ними вживую ещё не создавалось; точный размер 1080×607 / 1080×1350 — по описанию MCP. `about_company_115` — необязательная роль, по умолчанию **не передавай**: данные ОРД VK берёт из настроек кабинета.
+- **Справочник `banner_patterns`** (`vk_ads_dictionary_get(name="banner_patterns")`, проверено 19.10.2026) — 642 шаблона, ~690 тыс. символов: в чат не тянуть. Шаблоны объявления на сайт (VK Ads, активные): 514 `multiformat_square_site_vkads` — обязательны `primary` (url), `icon_256x256`, `title_40_vkads`, `text_90`, `cta_sites_full`, `image_600x600`; 513 `multiformat_landscape_site_vkads` — то же с `image_1080x607`; 515 `multiformat_portrait_site_vkads` — с `image_1080x1350`; 66 — портрет 9:16 с `image_607x1080`. Необязательные: `title_30_additional`, `text_long`, `about_company_115`. Значит, **логотип `icon_256x256` обязателен** во всех шаблонах сайта. Объявление с `image_1080x607` создано вживую 09.11.2026 (стенд AI Hub); с `image_1080x1350` — ещё нет, точный размер 1080×1350 — по описанию MCP. `about_company_115` — необязательная роль, по умолчанию **не передавай**: данные ОРД VK берёт из настроек кабинета.
 - Видео на сайт (справка, скилл форму по ролям для видео не собирает): шаблоны 321–324 и 509–512 — `icon_256x256` + `video_landscape_30s` / `video_square_1_1_30s` / `video_portrait_4_5_30s` / `video_portrait_9_16_30s` (и `*_180s`). Карусель (548, 614–617) — роли слайдов в справочнике без имени, не разобраны.
 - Описание `vk_ads_dictionary_get` в MCP пока не упоминает `targetings_tree` и `banner_patterns` — оба имени рабочие.
 - Без данных ОРД в кабинете (ИНН и название рекламодателя) создание падает с `ord_data_required`, а атомарный `ad_plans_create` не создаёт ничего. Повторять бесполезно — сначала заполнить данные в кабинете.
+
+### Отказы VK при создании и что исправить
+
+Сняты с живых вызовов `vk_ads_ad_plans_create` на стенде AI Hub (октябрь — ноябрь 2026). Атомарный вызов при
+любом отказе не создаёт ничего: исправь payload по строке таблицы и повтори вызов **один раз**
+(SKILL.md, Шаг 11, п. 0.3). Ответа нет в таблице — убери поле из payload и скажи пользователю словами, что
+настроить в кабинете.
+
+| Ответ VK | Причина | Что исправить |
+|---|---|---|
+| `Can't set both budget_limit and budget_limit_day` | у кампании оба бюджета | у кампании оставь общий `budget_limit`; дневной — `budget_limit_day` групп |
+| `budget_limit_day: Unallowed value` у групп | у кампании дневной бюджет, у групп — другой | у кампании — только общий `budget_limit`, дневной — у групп |
+| `Objective differ with ad_plan objective` | у кампании нет `objective` или цель группы другая | одна и та же `objective` у кампании и у каждой группы |
+| `objective: Empty value` | у группы нет `objective` | `objective` кампании — в группу |
+| `autobidding_mode: Unallowed value` | стратегия, которую VK на запись не принимает (`second_price_mean`, `second_price`, `fixed`) | у группы `"autobidding_mode": "max_goals"`; `price` и `max_price` убери |
+| `Unknown fields: patterns` | в объявлении поле шаблона (`patterns`, `settings`, `content_settings`) | убери поле; шаблон VK подбирает по ролям |
+| `At least one pattern must be in package's settings` | набор ролей не подошёл ни к одному шаблону пакета; чаще всего нет `icon_256x256` | добавь недостающую роль по образцу; номера шаблонов в ответе — не поле, `patterns` не добавляй; логотипа нет — попроси его, заглушку не подставляй |
+| `icon_256x256: Maximum width is 256` | логотип шире 256 px | загрузи логотип пользователя 256×256 и подставь его `id`; не картинку объявления и не заглушку |
+| `cta_sites_full … Unallowed value` | код кнопки не из списка | код из `allowed_values` ответа (список выше) |
+| `text_90 … String is too long` (`max_length`) | текст длиннее лимита роли | не режь — переспроси текст у пользователя |
+| `age … Unknown fields: to, from`, `Resource data must be an object`, `Unknown fields: age_list` | возраст не в форме `age.age_list` | SKILL.md, Шаг 11, п. 0.3 |
+| `targetings … Unknown fields: key_phrases` (`keywords`, `phrases`…) | ключевые фразы при создании не принимаются | убери; фразы — в кабинете, пометка в `launch_log.md` |
+| `banner_uniq_shows_limit: Permission required` | поле без прав у кабинета | убери поле |
+| `campaigns: Empty value` | кампания без групп | хотя бы одна группа с объявлениями в `campaigns` |
+| `invalid_package` («Invalid package») | пакет закрыт для новых групп | пакет с `can_create: true` из `vk_ads_packages_list` |
+| `ord_data_required` | нет данных ОРД в кабинете | не повторять: пользователь заполняет ИНН и название в кабинете |
 
 ### Как проверить, что объявления залились
 
@@ -118,7 +160,7 @@ python -m scripts.setup_vk_ads_mcp --token <CLICK_RU_TOKEN> --vk-account-id <ID>
 | Аудит аккаунта (Шаг 0.5) | `vk_ads_auth_check`, `vk_ads_account_info`, `vk_ads_ad_plans_list` |
 | Фактические CPM/CTR для прогноза (Шаг 9.5) | `vk_ads_statistics_summary`, `vk_ads_statistics_day` (entity `campaigns`/`ad_groups`/`banners`, `ids`, `date_from`/`date_to`). Значения лежат в `items[].total.base.cpm` / `…base.ctr`, деньги — строками; см. «Особенности ответов сервера» |
 | Загрузка креативов (Шаг 11) | `vk_ads_content_upload_image` / `vk_ads_content_upload_video`, параметр `source_path_or_url` — **на хосте только публичный http(s)-URL**; локальные картинки выкладывай через мост KeepImage (`scripts/upload_creatives_to_storage.py`), см. ниже |
-| Залив кампании (Шаг 11, путь A) | `vk_ads_ad_plans_create` с nested `campaigns: [...]` → `banners: [...]` — один атомарный вызов. Либо `vk_ads_ad_plans_create` → `vk_ads_campaigns_create(ad_plan_id=..., banners=[...])` по одной группе за вызов. Отдельного создания баннера нет |
+| Залив кампании (Шаг 11, путь A) | `vk_ads_ad_plans_create` с nested `campaigns: [...]` → `banners: [...]` — один атомарный вызов по образцу SKILL.md Шаг 11 п. 3. Большой payload — кампания с первой группой, остальные группы — `vk_ads_campaigns_create(payload={..., "ad_plan_id": ..., "banners": [...]})` по одной за вызов. Кампании без групп и отдельного создания баннера нет |
 | Пауза/запуск, бюджет (lifecycle) | `vk_ads_campaigns_set_status`, `vk_ads_campaigns_update`, `vk_ads_ad_plans_update` |
 | CRM-аудитории и пиксели | `vk_ads_users_lists_*`; пиксель — только `vk_ads_remarketing_pixels_list` (`limit` ≤ 50) для `id`. Создаёт пиксель человек в кабинете (Сайты → Добавить пиксель): VK требует `url`, `email` и пароль от счётчика Top@Mail.ru, пароль в чате не спрашиваем — `vk_ads_remarketing_pixels_create` сам не вызывай |
 | Выбор пакета размещения (Шаг 11, обязателен) | `vk_ads_packages_list(objective=...)` → `id` активного пакета. Всего ~174 пакета, фильтруй по `objective`; значения — в `available_objectives` ответа. Нет пикселя с целью — пакет с оплатой за клики (`priced_event_type: 1`), среди них — мультиформат для сайта (`multiformat_all_cpc` в имени; 19.10.2026 это 3232, рядом есть резервный CPC 4844); oCPM (`30`) требует `priced_goal` от пикселя |
@@ -206,7 +248,8 @@ python -m scripts.setup_vk_ads_mcp --token <CLICK_RU_TOKEN> --vk-account-id <ID>
 **Форма `targetings` при создании групп** — `SKILL.md` Шаг 11 п.0.3 и `references/vk-ads-api.md`
 (сверено на живых группах): `age.age_list` по годам, `sex` строками, `interests` числами. Описание
 `vk_ads_ad_plans_create` / `vk_ads_campaigns_create` в MCP схемы `targetings` не даёт — на ошибке
-валидации документацию VK API в интернете не ищи, действуй по п.0.3.
+валидации документацию VK API в интернете не ищи, действуй по п.0.3, образцу п. 3 и таблице «Отказы VK
+при создании» выше.
 
 ## Фолбеки
 

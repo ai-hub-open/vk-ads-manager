@@ -72,31 +72,45 @@ grant_type=client_credentials&client_id={ID}&client_secret={SECRET}
 ### Кампании — `/ad_plans` (UI «Кампания», верхний уровень)
 - `GET /ad_plans.json?limit=&offset=` — список
 - `GET /ad_plans/{id}.json` — детали
-- `POST /ad_plans.json` — создание (может содержать nested `campaigns` для атомарности)
+- `POST /ad_plans.json` — создание **вместе с группами**: в `campaigns` хотя бы одна группа с объявлениями
+  (кампанию без групп VK не создаёт — «campaigns: Empty value»)
 - `PUT /ad_plans/{id}.json` — обновление (в т.ч. `status: active` для активации)
 
-**Объект AdPlan (Кампания):**
+**Объект AdPlan (Кампания) — что передавать при создании:**
 ```json
 {
-  "id": 12345,
   "name": "AiSMM — SMM-фрилансеры — конверсии",
-  "status": "blocked|active|deleted",
-  "objective": "leads|conversions|traffic|reach|video_views|...",
+  "status": "blocked",
+  "objective": "site_conversions",
   "budget_limit": 50000,
-  "budget_limit_day": 5000,
-  "bid_strategy": "minimal_price|max_price",
-  "max_price": null
+  "date_start": "2026-12-01",
+  "date_end": "2026-12-31",
+  "campaigns": [ … группы, см. ниже … ]
 }
 ```
-(Суммы — в **рублях**: `500` = 500 ₽. `objective` и общий бюджет живут на уровне Кампании.)
+- Суммы — в **рублях**: `500` = 500 ₽.
+- `objective` — значение из `available_objectives` (`vk_ads_packages_list` / `GET /packages.json`), которое есть в
+  `objective` пакета групп: `site_conversions`, `leadads`, `socialengagement`… Та же цель — **у каждой группы**.
+  `leads`, `conversions`, `traffic`, `reach` — не цели VK.
+- Бюджет кампании — **только общий** `budget_limit` (на всё время), дневной — `budget_limit_day` у групп. Оба у
+  кампании — «Can't set both budget_limit and budget_limit_day»; один дневной у кампании VK требует повторить в
+  каждой группе — иначе у групп «budget_limit_day: Unallowed value». Даты не обязательны.
+- Стратегия — у групп: `"autobidding_mode": "max_goals"`, единственное значение, которое VK принимает на запись
+  (`second_price_mean`, `second_price`, `fixed` — «Unallowed value»). У кампании `autobidding_mode` не передавай:
+  там он включает распределение бюджета кампанией, вживую не проверено. Поля `bid_strategy` в API нет.
 
 ### Группы объявлений — `/campaigns` (UI «Группа»)
 Ребёнок Кампании — обязателен `ad_plan_id`, иначе orphan.
 
 - `GET /campaigns.json?ad_plan_id={id}` — список групп в кампании
 - `GET /campaigns/{id}.json`
-- `POST /campaigns.json` — создание (нужен `ad_plan_id`)
+- `POST /campaigns.json` — создание (нужен `ad_plan_id`) — для групп сверх первой: первая уходит вместе с кампанией
 - `PUT /campaigns/{id}.json`
+
+У группы обязательны `package_id` и та же `objective`, что у кампании («Objective differ with ad_plan objective»,
+«objective: Empty value»). Дневной бюджет — `budget_limit_day` группы. Стратегия — `"autobidding_mode": "max_goals"`:
+ставку VK подбирает сам в пределах дневного бюджета. Без неё VK ставит фиксированную ставку по цене пакета (1 ₽ за
+клик на 3232, сверено 18.11.2026), и группа почти не показывается. `price` и `max_price` не передаются.
 
 **Объект Campaign (Группа):**
 ```json
@@ -105,7 +119,10 @@ grant_type=client_credentials&client_id={ID}&client_secret={SECRET}
   "ad_plan_id": 12345,
   "name": "H1 — LAL 1% от платных",
   "status": "blocked|active",
+  "objective": "site_conversions",
+  "package_id": 3232,
   "budget_limit_day": 2000,
+  "autobidding_mode": "max_goals",
   "targetings": {
     "age": {"age_list": [25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45], "expand": false},
     "sex": ["female", "male"],
@@ -227,36 +244,42 @@ API нет, сохраняй возвращённые `id`.
    POST /audiences.json           (LAL 1% от source_id=<above>)
    ```
 
-2. **Кампания (ad_plan)** — цель + общий бюджет, status=blocked:
-   ```http
-   POST /ad_plans.json
-   {"name":"…","objective":"conversions","status":"blocked",
-    "budget_limit":50000,"budget_limit_day":5000,"bid_strategy":"minimal_price"}
-   ```
-
-3. **Группы (campaigns)** — по одной на ячейку матрицы, с `ad_plan_id`, status=blocked:
-   ```http
-   POST /campaigns.json
-   {"ad_plan_id":12345,"name":"H1 — LAL 1%","status":"blocked",
-    "budget_limit_day":2000,
-    "targetings":{"segments":[54321],"age":{"age_list":[25,26,…,45],"expand":false},
-                  "sex":["female","male"],"geo":{"regions":[1]}}}
-   ```
-
-4. **Объявления (banners)** — 3-5 на группу, **вложенным массивом внутри группы**:
+2. **Медиа и ссылки** — до создания кампании:
    ```http
    POST /content/static.json      (картинка → image_id; квадрат ровно 600×600)
-   POST /content/static.json      (логотип → logo_id, 256×256)
+   POST /content/static.json      (логотип → logo_id, не шире 256 px)
    POST /urls.json  {"url":"https://сайт/?utm_source=vk"}   (→ url_id)
-   POST /campaigns.json
-   {"ad_plan_id":12345,"package_id":<id>,"name":"H1 — LAL 1%","status":"blocked", …,
-    "banners":[
-      {"name":"cr_v1","status":"blocked",
-       "urls":{"primary":{"id":<url_id>}},
-       "textblocks":{"title_40_vkads":{"text":"…"},"text_90":{"text":"…"},
-                     "cta_sites_full":{"text":"visitSite"}},
-       "content":{"icon_256x256":{"id":<logo_id>},"image_600x600":{"id":<image_id>}}}
+   ```
+
+3. **Кампания вместе с группами и объявлениями** — один `POST /ad_plans.json`, всё в `blocked`.
+   Форма — как в образце `SKILL.md` (Шаг 11, п. 3); отличие REST — ссылка объявления `{"id": <url_id>}`
+   вместо адреса строкой:
+   ```http
+   POST /ad_plans.json
+   {"name":"…","status":"blocked","objective":"site_conversions","budget_limit":50000,
+    "campaigns":[
+      {"name":"H1 — LAL 1%","status":"blocked","objective":"site_conversions","package_id":<id>,
+       "budget_limit_day":2000,"autobidding_mode":"max_goals",
+       "targetings":{"segments":[54321],"age":{"age_list":[25,26,…,45],"expand":false},
+                     "sex":["female","male"],"geo":{"regions":[1]}},
+       "banners":[
+         {"name":"cr_v1","status":"blocked",
+          "urls":{"primary":{"id":<url_id>}},
+          "textblocks":{"title_40_vkads":{"text":"…"},"text_90":{"text":"…"},
+                        "cta_sites_full":{"text":"visitSite"}},
+          "content":{"icon_256x256":{"id":<logo_id>},"image_600x600":{"id":<image_id>}}}
+       ]}
     ]}
+   ```
+   Ответ — `{"id": <ad_plan_id>, "campaigns": [{"id": <id группы>}, …]}`. У кампании один бюджет, у групп та же
+   `objective` и `autobidding_mode: max_goals`; `price` и `max_price` не передаются. Отказы и что исправить —
+   таблица «Отказы VK при создании» в `references/vk-ads-mcp-integration.md`.
+
+4. **Группы сверх первой** (если одним запросом payload слишком большой) — по одной, с `ad_plan_id`:
+   ```http
+   POST /campaigns.json
+   {"ad_plan_id":12345,"name":"H2 — интересы","status":"blocked","objective":"site_conversions",
+    "package_id":<id>,"budget_limit_day":1500,"autobidding_mode":"max_goals","targetings":{…},"banners":[…]}
    ```
 
    🚨 **Отдельного `POST /banners.json` в API нет** — он отвечает
@@ -276,13 +299,18 @@ API нет, сохраняй возвращённые `id`.
    ```
    В нашем клиенте: `client.activate_ad_plan(id, confirmation="YES_ACTIVATE")` — сам проверяет, что у объявлений заполнен `company_info` (иначе `OrdPreflightError`), и требует явного подтверждения.
 
-**Проще всего** — одна операция вместо шагов 2-4:
+**Проще всего** — одна операция вместо шагов 3–4:
 ```python
 client.create_campaign_tree(ad_plan_payload, [
     {"payload": {group1…}, "banners": [b1, b2]},
     {"payload": {group2…}, "banners": [b3]},
 ])
 ```
+⚠️ **Известная ошибка клиента (0.7.12):** `create_campaign_tree` создаёт кампанию отдельным запросом без групп, а
+`deploy_campaign.py` по умолчанию шлёт кампании оба бюджета, `bid_strategy` и `objective: conversions`, группам —
+`placements` и ни одной `objective`. VK такое не примет (таблица «Отказы VK при создании» в
+`references/vk-ads-mcp-integration.md`). Путь B вживую не проверен (TC-03); до исправления клиента залив —
+путь A (MCP) или путь C.
 
 ---
 
@@ -323,10 +351,12 @@ groups = client.campaigns.list(ad_plan_id=plans[0]["id"])  # Группы в к�
 # Live-сверка имён полей перед созданием
 print(client.probe_schema())
 
-# Создание всего дерева сразу (всё в blocked)
+# Создание всего дерева сразу (всё в blocked).
+# ⚠️ 0.7.12: клиент шлёт кампанию без групп — VK откажет, см. «Известная ошибка клиента» выше.
 tree = client.create_campaign_tree(
-    {"name": "Тест", "objective": "leads", "budget_limit_day": 4000, "bid_strategy": "minimal_price"},
-    [{"payload": {"name": "H1", "package_id": 3232, "targetings": {...}},
+    {"name": "Тест", "objective": "site_conversions", "budget_limit": 30000},
+    [{"payload": {"name": "H1", "objective": "site_conversions", "package_id": 3232,
+                  "budget_limit_day": 1000, "autobidding_mode": "max_goals", "targetings": {...}},
       "banners": [{"name": "cr_v1",
                    "urls": {"primary": {"id": client.urls.register("https://сайт/")}},
                    "textblocks": {"title_40_vkads": {"text": "…"}, "text_90": {"text": "…"},
