@@ -178,3 +178,40 @@ def test_reference_samples_use_real_objectives_and_no_bid_strategy():
             plans = re.findall(r'\{"name":"[^"]*","(?:status|objective)"[^\n]*', block)
             for line in plans:
                 assert not ("budget_limit\":" in line and "budget_limit_day\":" in line), (path.name, line)
+
+
+# Сколько символов начала SKILL.md остаётся у модели после сжатия контекста: ~13,7 тыс. (19.11.2026).
+# Берём с запасом — правила записи должны стоять раньше.
+SURVIVES_COMPACTION = 12_000
+
+
+def test_write_rules_survive_context_compaction():
+    """0.7.14: после сжатия контекста образец Шага 11 пропал, агент отправил группу без кампании."""
+    head = _flat(SKILL.read_text(encoding="utf-8")[:SURVIVES_COMPACTION])
+    for phrase in (
+        "## 🚨 Запись в кабинет: перед вызовом — перечитай Шаг 11",
+        "заново прочитай Шаг 11",
+        "«Отказы VK при создании»",
+        "только общий `budget_limit`",
+        '`"autobidding_mode": "max_goals"`',
+        "`icon_256x256`",
+        "`patterns`, `price`, `max_price`, `bid_strategy` — нигде",
+        "`lead_form_id` — у кампании, не у группы",
+    ):
+        assert phrase in head, phrase
+
+
+def test_lead_forms_rules():
+    """0.7.14: агент положил `lead_form_id` в группу, а номер формы взял не из кабинета."""
+    step11 = _flat(_step11())
+    for phrase in (
+        "**Лид-формы (`leadads`) — только с готовой формой.**",
+        "Lead form is required for leadads objective",
+        "Unknown fields: lead_form_id",
+        "Lead form not found",
+        "Номер не придумывай",
+    ):
+        assert phrase in step11, phrase
+    ref = _flat(MCP_REF.read_text(encoding="utf-8"))
+    for phrase in ("Lead form is required for leadads objective", "Unknown fields: lead_form_id", "Lead form not found"):
+        assert phrase in ref, phrase

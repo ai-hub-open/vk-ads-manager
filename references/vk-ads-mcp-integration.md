@@ -120,7 +120,10 @@ python -m scripts.setup_vk_ads_mcp --token <CLICK_RU_TOKEN> --vk-account-id <ID>
 | `age … Unknown fields: to, from`, `Resource data must be an object`, `Unknown fields: age_list` | возраст не в форме `age.age_list` | SKILL.md, Шаг 11, п. 0.3 |
 | `targetings … Unknown fields: key_phrases` (`keywords`, `phrases`…) | ключевые фразы при создании не принимаются | убери; фразы — в кабинете, пометка в `launch_log.md` |
 | `banner_uniq_shows_limit: Permission required` | поле без прав у кабинета | убери поле |
-| `campaigns: Empty value` | кампания без групп | хотя бы одна группа с объявлениями в `campaigns` |
+| `campaigns: Empty value` | кампания без групп (или поля группы отправлены как кампания) | кампания по образцу SKILL.md, Шаг 11 п. 3: группа — внутри `campaigns` |
+| `lead_form_id: Lead form is required for leadads objective` | цель `leadads`, а у кампании нет номера лид-формы | `lead_form_id` — в кампанию; номер — от пользователя |
+| `Unknown fields: lead_form_id` (у группы) | номер лид-формы положен в группу | перенеси `lead_form_id` в кампанию |
+| `lead_form_id: Lead form not found` | формы с таким номером нет в этом кабинете | спроси пользователя, где форма; тем же номером не повторяй; номер не придумывай |
 | `invalid_package` («Invalid package») | пакет закрыт для новых групп | пакет с `can_create: true` из `vk_ads_packages_list` |
 | `ord_data_required` | нет данных ОРД в кабинете | не повторять: пользователь заполняет ИНН и название в кабинете |
 
