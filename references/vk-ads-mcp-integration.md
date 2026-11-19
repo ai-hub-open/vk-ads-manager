@@ -71,7 +71,7 @@ python -m scripts.setup_vk_ads_mcp --token <CLICK_RU_TOKEN> --vk-account-id <ID>
   ставит фиксированную ставку по цене пакета (1 ₽ за клик на 3232, сверено 18.11.2026) — после запуска группа
   почти не показывается. `price` и `max_price` не передаются, у кампании `autobidding_mode` нет.
 
-Описание `vk_ads_ad_plans_create` на сервере (`a03be316`) говорит «Обязательно: name» и предлагает привязать
+Описание `vk_ads_ad_plans_create` на сервере (версия 0.12.0) говорит «Обязательно: name» и предлагает привязать
 группы позже — так VK не принимает: нужны `objective` и хотя бы одна группа. Собирай по образцу `SKILL.md`.
 
 Создать группу, а потом «долить» в неё объявления — **нельзя**. Группа, созданная без баннеров,
@@ -93,14 +93,14 @@ python -m scripts.setup_vk_ads_mcp --token <CLICK_RU_TOKEN> --vk-account-id <ID>
 - `cta_sites_full` — код кнопки только из списка VK (`allowed_values` в ответе VK, 17.11.2026): `visitSite`, `register`, `signUp`, `learnMore`, `order`, `buy`, `buy_ticket`, `book`, `enroll`, `apply`, `contactUs`, `call`, `get`, `try`, `download`, `open`, `begin`, `choose`, `to_shop`, `see_menu`, `playGame`, `listen`, `watch`, `create`, `learn`, `takeSurvey`, `startTest`. `registration` в нём нет.
 - `icon_256x256` — логотип не шире 256 px: 384 px VK отклонил («Maximum width is 256»). Ширину загруженного файла показывает ответ `vk_ads_content_upload_image` — `variants.original.width`.
 - `image_600x600` принимает квадрат **ровно 600×600** — 1080×1080 отклоняется (живое наблюдение; в самих шаблонах размерных ограничений нет). Роли под квадрат 1080 нет (`banner_patterns`, 19.10.2026): `image_1080x1080` не существует.
-- **Справочник `banner_patterns`** (`vk_ads_dictionary_get(name="banner_patterns")`, проверено 19.10.2026) — 642 шаблона, ~690 тыс. символов: в чат не тянуть. Шаблоны объявления на сайт (VK Ads, активные): 514 `multiformat_square_site_vkads` — обязательны `primary` (url), `icon_256x256`, `title_40_vkads`, `text_90`, `cta_sites_full`, `image_600x600`; 513 `multiformat_landscape_site_vkads` — то же с `image_1080x607`; 515 `multiformat_portrait_site_vkads` — с `image_1080x1350`; 66 — портрет 9:16 с `image_607x1080`. Необязательные: `title_30_additional`, `text_long`, `about_company_115`. Значит, **логотип `icon_256x256` обязателен** во всех шаблонах сайта. Объявление с `image_1080x607` создано вживую 09.11.2026 (стенд AI Hub); с `image_1080x1350` — ещё нет, точный размер 1080×1350 — по описанию MCP. `about_company_115` — необязательная роль, по умолчанию **не передавай**: данные ОРД VK берёт из настроек кабинета.
+- **Справочник `banner_patterns`** (`vk_ads_dictionary_get(name="banner_patterns")`, проверено 19.10.2026) — 642 шаблона, ~690 тыс. символов: в чат не тянуть. Шаблоны объявления на сайт (VK Ads, активные): 514 `multiformat_square_site_vkads` — обязательны `primary` (url), `icon_256x256`, `title_40_vkads`, `text_90`, `cta_sites_full`, `image_600x600`; 513 `multiformat_landscape_site_vkads` — то же с `image_1080x607`; 515 `multiformat_portrait_site_vkads` — с `image_1080x1350`; 66 — портрет 9:16 с `image_607x1080`. Необязательные: `title_30_additional`, `text_long`, `about_company_115`. Значит, **логотип `icon_256x256` обязателен** во всех шаблонах сайта. Объявление с `image_1080x607` создано вживую 09.11.2026; с `image_1080x1350` — ещё нет, точный размер 1080×1350 — по описанию MCP. `about_company_115` — необязательная роль, по умолчанию **не передавай**: данные ОРД VK берёт из настроек кабинета.
 - Видео на сайт (справка, скилл форму по ролям для видео не собирает): шаблоны 321–324 и 509–512 — `icon_256x256` + `video_landscape_30s` / `video_square_1_1_30s` / `video_portrait_4_5_30s` / `video_portrait_9_16_30s` (и `*_180s`). Карусель (548, 614–617) — роли слайдов в справочнике без имени, не разобраны.
 - Описание `vk_ads_dictionary_get` в MCP пока не упоминает `targetings_tree` и `banner_patterns` — оба имени рабочие.
 - Без данных ОРД в кабинете (ИНН и название рекламодателя) создание падает с `ord_data_required`, а атомарный `ad_plans_create` не создаёт ничего. Повторять бесполезно — сначала заполнить данные в кабинете.
 
 ### Отказы VK при создании и что исправить
 
-Сняты с живых вызовов `vk_ads_ad_plans_create` на стенде AI Hub (октябрь — ноябрь 2026). Атомарный вызов при
+Сняты с живых вызовов `vk_ads_ad_plans_create` (октябрь — ноябрь 2026). Атомарный вызов при
 любом отказе не создаёт ничего: исправь payload по строке таблицы и повтори вызов **один раз**
 (SKILL.md, Шаг 11, п. 0.3). Ответа нет в таблице — убери поле из payload и скажи пользователю словами, что
 настроить в кабинете.
