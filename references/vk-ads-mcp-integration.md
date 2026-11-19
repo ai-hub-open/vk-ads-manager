@@ -69,7 +69,8 @@ python -m scripts.setup_vk_ads_mcp --token <CLICK_RU_TOKEN> --vk-account-id <ID>
 - объявление — `name`, `status`, `urls`, `textblocks`, `content` по ролям, без `patterns`;
 - стратегия — только `max_goals` у группы: VK сам подбирает ставку в пределах дневного бюджета. Без поля VK
   ставит фиксированную ставку по цене пакета (1 ₽ за клик на 3232, сверено 18.11.2026) — после запуска группа
-  почти не показывается. `price` и `max_price` не передаются, у кампании `autobidding_mode` нет.
+  почти не показывается. `price` и `max_price` не передаются. У кампании `autobidding_mode` не ставится: при
+  общем бюджете без дат VK отвечает «autobidding_mode: max_goals_not_available».
 
 Описание `vk_ads_ad_plans_create` на сервере (версия 0.12.0) говорит «Обязательно: name» и предлагает привязать
 группы позже — так VK не принимает: нужны `objective` и хотя бы одна группа. Собирай по образцу `SKILL.md`.
@@ -112,6 +113,7 @@ python -m scripts.setup_vk_ads_mcp --token <CLICK_RU_TOKEN> --vk-account-id <ID>
 | `Objective differ with ad_plan objective` | у кампании нет `objective` или цель группы другая | одна и та же `objective` у кампании и у каждой группы |
 | `objective: Empty value` | у группы нет `objective` | `objective` кампании — в группу |
 | `autobidding_mode: Unallowed value` | стратегия, которую VK на запись не принимает (`second_price_mean`, `second_price`, `fixed`) | у группы `"autobidding_mode": "max_goals"`; `price` и `max_price` убери |
+| `autobidding_mode: max_goals_not_available` («Set a total budget and translation period or daily ad_plan budget») | `autobidding_mode` стоит у кампании: там он включает распределение бюджета кампанией и при общем бюджете без дат не проходит | убери `autobidding_mode` у кампании, у групп оставь `max_goals`; даты ради него не добавляй |
 | `Unknown fields: patterns` | в объявлении поле шаблона (`patterns`, `settings`, `content_settings`) | убери поле; шаблон VK подбирает по ролям |
 | `At least one pattern must be in package's settings` | набор ролей не подошёл ни к одному шаблону пакета; чаще всего нет `icon_256x256` | добавь недостающую роль по образцу; номера шаблонов в ответе — не поле, `patterns` не добавляй; логотипа нет — попроси его, заглушку не подставляй |
 | `icon_256x256: Maximum width is 256` | логотип шире 256 px | загрузи логотип пользователя 256×256 и подставь его `id`; не картинку объявления и не заглушку |

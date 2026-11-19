@@ -30,7 +30,8 @@ API использует legacy myTarget имена. В новом UI ads.vk.ru 
 файла (раздел «# Шаг 11. Финальный залив в кабинет», путь A, п. 0.1–7) и таблицу «Отказы VK при создании» в
 `references/vk-ads-mcp-integration.md`**. Payload по памяти не собирай. Коротко, что там:
 - **Кампания:** `name`, `status: "blocked"`, `objective`, только общий `budget_limit`; в `campaigns` — хотя бы одна
-  группа (кампанию без групп VK не создаёт).
+  группа (кампанию без групп VK не создаёт). `autobidding_mode`, `package_id`, `targetings` у кампании не ставь —
+  они только у групп.
 - **Группа:** `name`, `status: "blocked"`, та же `objective`, `package_id`, `budget_limit_day`,
   `"autobidding_mode": "max_goals"`, `targetings` (возраст — `age.age_list` по годам), `banners`.
 - **Пакет:** нет пикселя с целью — только с оплатой за клики (`priced_event_type: 1`); пакет oCPM (`30`) без цели
@@ -1080,8 +1081,11 @@ python -m scripts.generate_creative_videos \
      цене пакета — на CPC-пакете 3232 это 1 ₽ за клик, и после запуска группа почти не показывается.
      Значения из чтения старых групп (`second_price_mean`, `second_price`, `fixed`) VK на запись не
      принимает: «autobidding_mode: Unallowed value». `price` и `max_price` не передавай: при `max_goals`
-     ставку VK не берёт, а предел цены — только по явной просьбе пользователя. У кампании
-     `autobidding_mode` нет: там он включает распределение бюджета кампанией, а так вживую не проверено.
+     ставку VK не берёт, а предел цены — только по явной просьбе пользователя. **У кампании
+     `autobidding_mode` не ставь:** там он включает распределение бюджета кампанией, и при общем бюджете без
+     дат VK отказывает — «autobidding_mode: max_goals_not_available» («Set a total budget and translation
+     period or daily ad_plan budget»). Получил этот отказ — убери поле у кампании, у групп оставь `max_goals`;
+     даты ради него не добавляй.
    - **Объявление — только пять ключей образца:** `name`, `status`, `urls`, `textblocks`, `content`.
      `patterns`, `settings`, `content_settings` не передавай («Unknown fields: patterns»): шаблон задаёт
      пакет, VK подбирает его по набору ролей. Ответ «At least one pattern must be in package's settings»
@@ -1101,11 +1105,11 @@ python -m scripts.generate_creative_videos \
      горизонтальная `image_1080x607`. `about_company_115` («О компании») — необязательная роль, по умолчанию
      **не передавай**: данные ОРД VK берёт из кабинета. Интересы — ID из `_audiences.md` (Шаг 6.5).
    - **Перед вызовом сверь payload по списку** (молча, в чат не пересказывай): у кампании — `objective` и
-     только `budget_limit`; у каждой группы — та же `objective`, `package_id`, `budget_limit_day`,
-     `"autobidding_mode": "max_goals"`, `targetings` по п. 0.3; в каждом объявлении — пять ключей образца,
-     `icon_256x256` с `id` логотипа не шире 256 px и картинка с `id` из ответа загрузки, `title_40_vkads` ≤ 40,
-     `text_90` ≤ 90, кнопка из списка; нигде нет `patterns`, `price`, `max_price`. Не сходится — исправь до
-     вызова.
+     только `budget_limit`, без `autobidding_mode`; у каждой группы — та же `objective`, `package_id`,
+     `budget_limit_day`, `"autobidding_mode": "max_goals"`, `targetings` по п. 0.3; в каждом объявлении — пять
+     ключей образца, `icon_256x256` с `id` логотипа не шире 256 px и картинка с `id` из ответа загрузки,
+     `title_40_vkads` ≤ 40, `text_90` ≤ 90, кнопка из списка; нигде нет `patterns`, `price`, `max_price`. Не
+     сходится — исправь до вызова.
    - **Пользователь отклонил запись** (создание, загрузку) — не повторяй её ни с теми же, ни с похожими
      аргументами: спроси, что изменить.
 4. **Если payload слишком большой** (много групп и объявлений): создай кампанию с **первой** группой —

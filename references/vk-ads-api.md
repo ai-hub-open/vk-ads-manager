@@ -97,7 +97,8 @@ grant_type=client_credentials&client_id={ID}&client_secret={SECRET}
   каждой группе — иначе у групп «budget_limit_day: Unallowed value». Даты не обязательны.
 - Стратегия — у групп: `"autobidding_mode": "max_goals"`, единственное значение, которое VK принимает на запись
   (`second_price_mean`, `second_price`, `fixed` — «Unallowed value»). У кампании `autobidding_mode` не передавай:
-  там он включает распределение бюджета кампанией, вживую не проверено. Поля `bid_strategy` в API нет.
+  там он включает распределение бюджета кампанией, и при общем бюджете без дат VK отвечает
+  «autobidding_mode: max_goals_not_available». Поля `bid_strategy` в API нет.
 
 ### Группы объявлений — `/campaigns` (UI «Группа»)
 Ребёнок Кампании — обязателен `ad_plan_id`, иначе orphan.
