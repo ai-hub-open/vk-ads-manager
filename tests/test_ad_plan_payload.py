@@ -197,8 +197,21 @@ def test_write_rules_survive_context_compaction():
         "`icon_256x256`",
         "`patterns`, `price`, `max_price`, `bid_strategy` — нигде",
         "`lead_form_id` — у кампании, не у группы",
+        "только с оплатой за клики (`priced_event_type: 1`)",
+        "`vk_ads_remarketing_pixels_create` не вызывай",
+        "без «×» и других спецсимволов",
     ):
         assert phrase in head, phrase
+
+
+def test_restricted_characters_and_ocpm_refusals():
+    """0.7.14: на живом заливе VK отклонил «×» в тексте и пакет oCPM без цели пикселя («priced_goal: Empty value»)."""
+    ref = _flat(MCP_REF.read_text(encoding="utf-8"))
+    for phrase in ("String contains restricted characters", "priced_goal: Empty value", "не создавай пиксель через API"):
+        assert phrase in ref, phrase
+    assert "String contains restricted characters" in _flat(_step11())
+    copy = _flat((REPO_ROOT / "references" / "ad-copywriting.md").read_text(encoding="utf-8"))
+    assert "Знак «×» и другие спецсимволы" in copy
 
 
 def test_lead_forms_rules():

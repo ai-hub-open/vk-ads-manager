@@ -117,6 +117,9 @@ python -m scripts.setup_vk_ads_mcp --token <CLICK_RU_TOKEN> --vk-account-id <ID>
 | `icon_256x256: Maximum width is 256` | логотип шире 256 px | загрузи логотип пользователя 256×256 и подставь его `id`; не картинку объявления и не заглушку |
 | `cta_sites_full … Unallowed value` | код кнопки не из списка | код из `allowed_values` ответа (список выше) |
 | `text_90 … String is too long` (`max_length`) | текст длиннее лимита роли | не режь — переспроси текст у пользователя |
+| `title_40_vkads` / `text_90`: `String contains restricted characters` | в тексте символ, который VK не принимает, например «×» | замени: «×3» → «x3» или «в 3 раза»; смысл не меняй, иначе переспроси текст |
+| `priced_goal: Empty value` | пакет с оптимизацией на конверсии (oCPM, `priced_event_type: 30`) без цели пикселя | пакет с оплатой за клики (`priced_event_type: 1`, SKILL.md Шаг 11 п. 0.1); oCPM — только с пикселем и его целью, форма `priced_goal` вживую не сверена |
+| `remarketing/counters`: `email`, `password` — `Empty value` | пиксель через API: VK требует почту и пароль счётчика | не создавай пиксель через API — его ставит человек в кабинете (Сайты → Добавить пиксель) |
 | `age … Unknown fields: to, from`, `Resource data must be an object`, `Unknown fields: age_list` | возраст не в форме `age.age_list` | SKILL.md, Шаг 11, п. 0.3 |
 | `targetings … Unknown fields: key_phrases` (`keywords`, `phrases`…) | ключевые фразы при создании не принимаются | убери; фразы — в кабинете, пометка в `launch_log.md` |
 | `banner_uniq_shows_limit: Permission required` | поле без прав у кабинета | убери поле |

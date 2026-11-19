@@ -33,9 +33,13 @@ API использует legacy myTarget имена. В новом UI ads.vk.ru 
   группа (кампанию без групп VK не создаёт).
 - **Группа:** `name`, `status: "blocked"`, та же `objective`, `package_id`, `budget_limit_day`,
   `"autobidding_mode": "max_goals"`, `targetings` (возраст — `age.age_list` по годам), `banners`.
+- **Пакет:** нет пикселя с целью — только с оплатой за клики (`priced_event_type: 1`); пакет oCPM (`30`) без цели
+  пикселя VK не примет («priced_goal: Empty value»). Пиксель через API не создаётся — VK требует пароль счётчика:
+  `vk_ads_remarketing_pixels_create` не вызывай, пиксель ставит человек в кабинете.
 - **Объявление:** только `name`, `status`, `urls`, `textblocks`, `content`. В `content` — логотип `icon_256x256`
   (файл пользователя, не шире 256 px; без логотипа кампанию не создаём, заглушку не подставляем) и картинка.
-  `patterns`, `price`, `max_price`, `bid_strategy` — нигде.
+  Тексты: `title_40_vkads` ≤ 40, `text_90` ≤ 90, без «×» и других спецсимволов. `patterns`, `price`,
+  `max_price`, `bid_strategy` — нигде.
 - **Лид-формы** (`objective: "leadads"`): `lead_form_id` — у кампании, не у группы. Номер формы — только от
   пользователя и только из этого же кабинета; не придумывай и не бери из других кабинетов.
 - Отказ VK — исправь по таблице и повтори один раз; о ходе заливки в чате — только статус словами.
@@ -1086,6 +1090,8 @@ python -m scripts.generate_creative_videos \
      добавляй никогда. Добавь недостающую роль по образцу.
    - **Роли** (сверено вживую): `urls.primary` — адрес строкой, MCP сам регистрирует ссылку. `title_40_vkads`
      ≤ 40 и `text_90` ≤ 90 символов — посчитай длину до вызова; длиннее — не режь, переспроси текст.
+     Знак «×» VK в текстах не принимает («String contains restricted characters»): «трафик ×3» пиши как
+     «трафик x3» или «в 3 раза». Другие необычные символы (стрелки, звёздочки, значки) тоже замени словами.
      `cta_sites_full` — код кнопки только из списка VK: `visitSite`, `register`, `signUp`, `learnMore`,
      `order`, `buy`, `apply`, `contactUs` и другие (полный список — `references/vk-ads-mcp-integration.md`);
      `registration` в списке нет. `icon_256x256` — **обязательная** роль, логотип рекламодателя не шире
