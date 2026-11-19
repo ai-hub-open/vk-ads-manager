@@ -40,3 +40,10 @@ def test_step11_does_not_tell_to_show_error_text():
 def test_step11_builds_payload_from_samples_first():
     step11 = _section(_skill(), "# Шаг 11. Финальный залив в кабинет", "# Шаг 11 (опциональный)")
     assert "До первого вызова создания собери payload по образцам этого шага" in step11
+
+
+def test_step11_no_premature_confidence():
+    """0.7.13 (aihub-858): агент обещал «остался один блокер», а VK возвращал новые отказы."""
+    step11 = _section(_skill(), "# Шаг 11. Финальный залив в кабинет", "# Шаг 11 (опциональный)")
+    assert "До ответа VK с ID созданной кампании не говори, что остальное уже проверено" in step11
+    assert "VK возвращает отказы по одному" in step11
