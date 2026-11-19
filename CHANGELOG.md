@@ -28,8 +28,13 @@
     написании объявлений.
   - **Таблица отказов:** «String contains restricted characters», «priced_goal: Empty value», ответ VK на создание
     пикселя.
+- **Стратегия — только у групп.** В сквозном прогоне 19.11.2026 агент поставил `"autobidding_mode": "max_goals"` и у
+  кампании, VK ответил «autobidding_mode: max_goals_not_available» («Set a total budget and translation period or
+  daily ad_plan budget»). Раздел в начале `SKILL.md` и проверка перед вызовом (Шаг 11, п. 3) называют
+  `autobidding_mode` среди полей, которых у кампании нет; ответ VK и что исправить — в Шаге 11, таблице отказов и
+  `references/vk-ads-api.md`.
 - **`tests/test_ad_plan_payload.py`:** правила записи стоят в первых 12 тыс. символов `SKILL.md`; правила лид-форм,
-  спецсимволов и пакетов без пикселя на месте.
+  спецсимволов, пакетов без пикселя и стратегии у кампании на месте.
 
 ## 0.7.13 — 2026-11-18
 

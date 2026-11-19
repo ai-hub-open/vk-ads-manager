@@ -228,3 +228,14 @@ def test_lead_forms_rules():
     ref = _flat(MCP_REF.read_text(encoding="utf-8"))
     for phrase in ("Lead form is required for leadads objective", "Unknown fields: lead_form_id", "Lead form not found"):
         assert phrase in ref, phrase
+
+
+def test_strategy_only_on_groups():
+    """0.7.14: на живом заливе агент поставил `autobidding_mode` и у кампании — «max_goals_not_available»."""
+    head = _flat(SKILL.read_text(encoding="utf-8")[:SURVIVES_COMPACTION])
+    assert "`autobidding_mode`, `package_id`, `targetings` у кампании не ставь" in head
+    step11 = _flat(_step11())
+    assert "autobidding_mode: max_goals_not_available" in step11
+    assert "только `budget_limit`, без `autobidding_mode`" in step11, "проверка перед вызовом"
+    for path in (MCP_REF, API_REF):
+        assert "autobidding_mode: max_goals_not_available" in _flat(path.read_text(encoding="utf-8")), path.name
