@@ -27,6 +27,9 @@ CTA_SITES = {
     "try", "contactUs", "listen", "watch", "create", "learn", "takeSurvey", "startTest",
 }
 BANNER_KEYS = {"name", "status", "urls", "textblocks", "content"}
+# Поля кампании (ad_plan): образец и то, что добавляется по случаю. Своё поле — «Unknown fields: …» (19.11.2026).
+PLAN_KEYS = {"name", "status", "objective", "budget_limit", "campaigns"}
+PLAN_OPTIONAL_KEYS = {"lead_form_id", "date_start", "date_end"}
 NEVER_ON_CREATE = {"price", "max_price", "bid_strategy", "patterns", "settings", "content_settings"}
 
 
@@ -72,6 +75,7 @@ def test_sample_plan_has_name_objective_one_budget_and_groups():
     assert plan["campaigns"], "campaigns: Empty value — кампанию без групп VK не создаёт"
     assert "package_id" not in plan and "targetings" not in plan
     assert "autobidding_mode" not in plan, "у кампании он включает распределение бюджета кампанией"
+    assert set(plan) == PLAN_KEYS, "у кампании в образце — только её поля, без своих и пояснений"
 
 
 def test_sample_groups_share_objective_and_carry_package_budget_targetings():
@@ -239,3 +243,17 @@ def test_strategy_only_on_groups():
     assert "только `budget_limit`, без `autobidding_mode`" in step11, "проверка перед вызовом"
     for path in (MCP_REF, API_REF):
         assert "autobidding_mode: max_goals_not_available" in _flat(path.read_text(encoding="utf-8")), path.name
+
+
+def test_plan_has_only_its_own_fields():
+    """0.7.14: на живом заливе агент добавил кампании поле с фразой о ставке — «Unknown fields: autobidding_note»."""
+    head = _flat(SKILL.read_text(encoding="utf-8")[:SURVIVES_COMPACTION])
+    assert "**Других полей у кампании нет:**" in head
+    assert "своих полей и пояснений не добавляй" in head
+    for key in sorted(PLAN_KEYS | PLAN_OPTIONAL_KEYS):
+        assert f"`{key}`" in head, key
+    step11 = _flat(_step11())
+    assert "**У кампании — только поля образца**" in step11
+    assert "Unknown fields: autobidding_note" in step11
+    assert "других ключей, кроме `name`, `status`, `campaigns`" in step11, "проверка перед вызовом"
+    assert "Unknown fields: autobidding_note" in _flat(MCP_REF.read_text(encoding="utf-8"))
