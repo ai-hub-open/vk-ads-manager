@@ -10,7 +10,7 @@
 python -m scripts.setup_vk_ads_mcp --token <CLICK_RU_TOKEN> --vk-account-id <ID> --target all
 ```
 
-Установщик пишет блок `mcpServers.vk-ads` в конфиги Cursor (`~/.cursor/mcp.json`), Claude Code (`.mcp.json`) и Claude Desktop (через stdio-мост `mcp-remote`). Флаги: `--target cursor|cursor-project|claude-code|claude-desktop|all`, `--dry-run`, `--remove`. Существующие серверы в конфигах сохраняются.
+Установщик пишет блок `mcpServers.vk-ads` в конфиги Cursor (`~/.cursor/mcp.json`), Claude Code (`.mcp.json`) и Claude Desktop (через прокси `mcp-remote`). Флаги: `--target cursor|cursor-project|claude-code|claude-desktop|all`, `--dry-run`, `--remove`. Существующие серверы в конфигах сохраняются.
 
 Вручную — по `docs/hosted-mcp-setup.md` репозитория пакета (там же форматы для каждого клиента).
 
@@ -168,7 +168,7 @@ python -m scripts.setup_vk_ads_mcp --token <CLICK_RU_TOKEN> --vk-account-id <ID>
 | Выбор кабинета (режим click.ru, мультиаккаунт) | `vk_ads_accounts_list` → `account_id` передавать в каждый последующий вызов |
 | Аудит аккаунта (Шаг 0.5) | `vk_ads_auth_check`, `vk_ads_account_info`, `vk_ads_ad_plans_list` |
 | Фактические CPM/CTR для прогноза (Шаг 9.5) | `vk_ads_statistics_summary`, `vk_ads_statistics_day` (entity `campaigns`/`ad_groups`/`banners`, `ids`, `date_from`/`date_to`). Значения лежат в `items[].total.base.cpm` / `…base.ctr`, деньги — строками; см. «Особенности ответов сервера» |
-| Загрузка креативов (Шаг 11) | `vk_ads_content_upload_image` / `vk_ads_content_upload_video`, параметр `source_path_or_url` — **на хосте только публичный http(s)-URL**; локальные картинки выкладывай через мост KeepImage (`scripts/upload_creatives_to_storage.py`), см. ниже |
+| Загрузка креативов (Шаг 11) | `vk_ads_content_upload_image` / `vk_ads_content_upload_video`, параметр `source_path_or_url` — **на хосте только публичный http(s)-URL**; локальные картинки выкладывай через хранилище KeepImage (`scripts/upload_creatives_to_storage.py`), см. ниже |
 | Залив кампании (Шаг 11, путь A) | `vk_ads_ad_plans_create` с nested `campaigns: [...]` → `banners: [...]` — один атомарный вызов по образцу SKILL.md Шаг 11 п. 3. Большой payload — кампания с первой группой, остальные группы — `vk_ads_campaigns_create(payload={..., "ad_plan_id": ..., "banners": [...]})` по одной за вызов. Кампании без групп и отдельного создания баннера нет |
 | Пауза/запуск, бюджет (lifecycle) | `vk_ads_campaigns_set_status`, `vk_ads_campaigns_update`, `vk_ads_ad_plans_update` |
 | CRM-аудитории и пиксели | `vk_ads_users_lists_*`; пиксель — только `vk_ads_remarketing_pixels_list` (`limit` ≤ 50) для `id`. Создаёт пиксель человек в кабинете (Сайты → Добавить пиксель): VK требует `url`, `email` и пароль от счётчика Top@Mail.ru, пароль в чате не спрашиваем — `vk_ads_remarketing_pixels_create` сам не вызывай |
